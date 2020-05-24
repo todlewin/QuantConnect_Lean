@@ -18,6 +18,7 @@ using QuantConnect.Algorithm;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.GDAX;
 using QuantConnect.Configuration;
+using QuantConnect.Logging;
 using RestSharp;
 
 namespace QuantConnect.Tests.Brokerages.GDAX
@@ -30,6 +31,7 @@ namespace QuantConnect.Tests.Brokerages.GDAX
         {
             using (var brokerage = GetBrokerage())
             {
+                brokerage.Connect();
                 Assert.IsTrue(brokerage.IsConnected);
 
                 for (var i = 0; i < 50; i++)
@@ -44,6 +46,7 @@ namespace QuantConnect.Tests.Brokerages.GDAX
         {
             using (var brokerage = GetBrokerage())
             {
+                brokerage.Connect();
                 Assert.IsTrue(brokerage.IsConnected);
 
                 for (var i = 0; i < 50; i++)
@@ -53,10 +56,39 @@ namespace QuantConnect.Tests.Brokerages.GDAX
             }
         }
 
+        [Test]
+        public void ClientConnects()
+        {
+            using (var brokerage = GetBrokerage())
+            {
+                var hasError = false;
+
+                brokerage.Message += (s, e) => { hasError = true; };
+
+                Log.Trace("Connect #1");
+                brokerage.Connect();
+                Assert.IsTrue(brokerage.IsConnected);
+
+                Assert.IsFalse(hasError);
+
+                Log.Trace("Disconnect #1");
+                brokerage.Disconnect();
+                Assert.IsFalse(brokerage.IsConnected);
+
+                Log.Trace("Connect #2");
+                brokerage.Connect();
+                Assert.IsTrue(brokerage.IsConnected);
+
+                Log.Trace("Disconnect #2");
+                brokerage.Disconnect();
+                Assert.IsFalse(brokerage.IsConnected);
+            }
+        }
+
         private static GDAXBrokerage GetBrokerage()
         {
             var wssUrl = Config.Get("gdax-url", "wss://ws-feed.pro.coinbase.com");
-            var webSocketClient = new WebSocketWrapper();
+            var webSocketClient = new WebSocketClientWrapper();
             var restClient = new RestClient("https://api.pro.coinbase.com");
             var apiKey = Config.Get("gdax-api-key");
             var apiSecret = Config.Get("gdax-api-secret");
@@ -66,10 +98,7 @@ namespace QuantConnect.Tests.Brokerages.GDAX
             var userToken = Config.Get("api-access-token");
             var priceProvider = new ApiPriceProvider(userId, userToken);
 
-            var brokerage = new GDAXBrokerage(wssUrl, webSocketClient, restClient, apiKey, apiSecret, passPhrase, algorithm, priceProvider);
-            brokerage.Connect();
-
-            return brokerage;
+            return new GDAXBrokerage(wssUrl, webSocketClient, restClient, apiKey, apiSecret, passPhrase, algorithm, priceProvider);
         }
     }
 }

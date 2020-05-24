@@ -36,7 +36,7 @@ namespace QuantConnect.Tests.Brokerages.GDAX
         public void GetsHistory(Symbol symbol, Resolution resolution, TickType tickType, TimeSpan period, bool shouldBeEmpty)
         {
             var restClient = new RestClient("https://api.pro.coinbase.com");
-            var webSocketClient = new WebSocketWrapper();
+            var webSocketClient = new WebSocketClientWrapper();
 
             var brokerage = new GDAXBrokerage(
                 Config.Get("gdax-url", "wss://ws-feed.pro.coinbase.com"), webSocketClient, restClient,
@@ -85,7 +85,7 @@ namespace QuantConnect.Tests.Brokerages.GDAX
             Log.Trace("Data points retrieved: " + historyProvider.DataPointCount);
         }
 
-        public TestCaseData[] TestParameters
+        private static TestCaseData[] TestParameters
         {
             get
             {
