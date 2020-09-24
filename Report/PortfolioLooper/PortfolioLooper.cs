@@ -70,7 +70,8 @@ namespace QuantConnect.Report
             var dataCacheProvider = new ZipDataCacheProvider(new DefaultDataProvider(), false);
             var historyProvider = Composer.Instance.GetExportedValueByTypeName<IHistoryProvider>("SubscriptionDataReaderHistoryProvider");
 
-            historyProvider.Initialize(new HistoryProviderInitializeParameters(null, null, null, dataCacheProvider, mapFileProvider, factorFileProvider, (_) => { }, false));
+            var dataPermissionManager = new DataPermissionManager();
+            historyProvider.Initialize(new HistoryProviderInitializeParameters(null, null, null, dataCacheProvider, mapFileProvider, factorFileProvider, (_) => { }, false, dataPermissionManager));
             Algorithm = new PortfolioLooperAlgorithm((decimal)startingCash, orders);
             Algorithm.SetHistoryProvider(historyProvider);
 
@@ -89,12 +90,15 @@ namespace QuantConnect.Report
                         symbolPropertiesDataBase,
                         Algorithm,
                         RegisteredSecurityDataTypesProvider.Null,
-                        new SecurityCacheProvider(Algorithm.Portfolio))),
+                        new SecurityCacheProvider(Algorithm.Portfolio)),
+                    dataPermissionManager,
+                    new DefaultDataProvider()),
                 Algorithm,
                 Algorithm.TimeKeeper,
                 marketHoursDatabase,
                 false,
-                RegisteredSecurityDataTypesProvider.Null);
+                RegisteredSecurityDataTypesProvider.Null,
+                dataPermissionManager);
 
             _securityService = new SecurityService(Algorithm.Portfolio.CashBook,
                 marketHoursDatabase,
@@ -122,7 +126,7 @@ namespace QuantConnect.Report
             results.Initialize(job, new Messaging.Messaging(), new Api.Api(), transactions);
             results.SetAlgorithm(Algorithm, Algorithm.Portfolio.TotalPortfolioValue);
             transactions.Initialize(Algorithm, new BacktestingBrokerage(Algorithm), results);
-            feed.Initialize(Algorithm, job, results, null, null, null, _dataManager, null);
+            feed.Initialize(Algorithm, job, results, null, null, null, _dataManager, null, null);
 
             // Begin setting up the currency conversion feed if needed
             var coreSecurities = Algorithm.Securities.Values.ToList();
@@ -195,25 +199,26 @@ namespace QuantConnect.Report
         private static IEnumerable<Slice> GetHistory(IAlgorithm algorithm, List<Security> securities, Resolution resolution)
         {
             var historyRequests = new List<Data.HistoryRequest>();
+            var historyRequestFactory = new HistoryRequestFactory(algorithm);
 
             // Create the history requests
             foreach (var security in securities)
             {
-                var historyRequestFactory = new HistoryRequestFactory(algorithm);
                 var configs = algorithm.SubscriptionManager
                     .SubscriptionDataConfigService
                     .GetSubscriptionDataConfigs(security.Symbol, includeInternalConfigs: true);
+
+                // we need to order and select a specific configuration type
+                // so the conversion rate is deterministic
+                var configToUse = configs.OrderBy(x => x.TickType).First();
 
                 var startTime = historyRequestFactory.GetStartTimeAlgoTz(
                     security.Symbol,
                     1,
                     resolution,
-                    security.Exchange.Hours);
+                    security.Exchange.Hours,
+                    configToUse.DataTimeZone);
                 var endTime = algorithm.EndDate;
-
-                // we need to order and select a specific configuration type
-                // so the conversion rate is deterministic
-                var configToUse = configs.OrderBy(x => x.TickType).First();
 
                 historyRequests.Add(historyRequestFactory.CreateHistoryRequest(
                     configToUse,

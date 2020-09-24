@@ -39,29 +39,42 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         private IDataFeedSubscriptionManager _dataManager;
         private readonly IAlgorithm _algorithm;
         private readonly ISecurityService _securityService;
+        private readonly IDataPermissionManager _dataPermissionManager;
         private readonly Dictionary<DateTime, Dictionary<Symbol, Security>> _pendingSecurityAdditions = new Dictionary<DateTime, Dictionary<Symbol, Security>>();
         private readonly PendingRemovalsManager _pendingRemovalsManager;
         private readonly CurrencySubscriptionDataConfigManager _currencySubscriptionDataConfigManager;
+        private readonly InternalSubscriptionManager _internalSubscriptionManager;
         private bool _initializedSecurityBenchmark;
+        private readonly IDataProvider _dataProvider;
         private bool _anyDoesNotHaveFundamentalDataWarningLogged;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="UniverseSelection"/> class
         /// </summary>
         /// <param name="algorithm">The algorithm to add securities to</param>
-        /// <param name="securityService"></param>
+        /// <param name="securityService">The security service</param>
+        /// <param name="dataPermissionManager">The data permissions manager</param>
+        /// <param name="dataProvider">The data provider to use</param>
+        /// <param name="internalConfigResolution">The resolution to use for internal configuration</param>
         public UniverseSelection(
             IAlgorithm algorithm,
-            ISecurityService securityService)
+            ISecurityService securityService,
+            IDataPermissionManager dataPermissionManager,
+            IDataProvider dataProvider,
+            Resolution internalConfigResolution = Resolution.Minute)
         {
+            _dataProvider = dataProvider;
             _algorithm = algorithm;
-
             _securityService = securityService;
+            _dataPermissionManager = dataPermissionManager;
             _pendingRemovalsManager = new PendingRemovalsManager(algorithm.Transactions);
             _currencySubscriptionDataConfigManager = new CurrencySubscriptionDataConfigManager(algorithm.Portfolio.CashBook,
                 algorithm.Securities,
                 algorithm.SubscriptionManager,
-                _securityService);
+                _securityService,
+                dataPermissionManager.GetResolution(Resolution.Minute));
+            // TODO: next step is to merge currency internal subscriptions under the same 'internal manager' instance and we could move this directly into the DataManager class
+            _internalSubscriptionManager = new InternalSubscriptionManager(_algorithm, internalConfigResolution);
         }
 
         /// <summary>
@@ -74,6 +87,15 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 throw new Exception("UniverseSelection.SetDataManager(): can only be set once");
             }
             _dataManager = dataManager;
+
+            _internalSubscriptionManager.Added += (sender, request) =>
+            {
+                _dataManager.AddSubscription(request);
+            };
+            _internalSubscriptionManager.Removed += (sender, request) =>
+            {
+                _dataManager.RemoveSubscription(request.Configuration);
+            };
         }
 
         /// <summary>
@@ -103,7 +125,6 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 {
                     // prepare a BaseDataCollection of FineFundamental instances
                     var fineCollection = new BaseDataCollection();
-                    var dataProvider = new DefaultDataProvider();
 
                     // Create a dictionary of CoarseFundamental keyed by Symbol that also has FineFundamental
                     // Coarse raw data has SID collision on: CRHCY R735QTJ8XC9X
@@ -148,7 +169,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                         var localStartTime = dateTimeUtc.ConvertFromUtc(config.ExchangeTimeZone).AddDays(-1);
                         var factory = new FineFundamentalSubscriptionEnumeratorFactory(_algorithm.LiveMode, x => new[] { localStartTime });
                         var request = new SubscriptionRequest(true, universe, security, new SubscriptionDataConfig(config), localStartTime, localStartTime);
-                        using (var enumerator = factory.CreateEnumerator(request, dataProvider))
+                        using (var enumerator = factory.CreateEnumerator(request, _dataProvider))
                         {
                             if (enumerator.MoveNext())
                             {
@@ -326,6 +347,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     if (!request.IsUniverseSubscription)
                     {
                         addedSubscription = true;
+
+                        _internalSubscriptionManager.AddedSubscriptionRequest(request);
                     }
                 }
 
@@ -376,6 +399,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 var securityBenchmark = _algorithm.Benchmark as SecurityBenchmark;
                 if (securityBenchmark != null)
                 {
+                    var dataConfig = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(
+                        securityBenchmark.Security.Symbol,
+                        _dataPermissionManager.GetResolution(_algorithm.LiveMode ? Resolution.Minute : Resolution.Hour),
+                        isInternalFeed: true,
+                        fillForward: false).First();
+
                     // we want to start from the previous tradable bar so the benchmark security
                     // never has 0 price
                     var previousTradableBar = Time.GetStartTimeForTradeBars(
@@ -383,13 +412,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                         utcStart.ConvertFromUtc(securityBenchmark.Security.Exchange.TimeZone),
                         _algorithm.LiveMode ? Time.OneMinute : Time.OneDay,
                         1,
-                        false).ConvertToUtc(securityBenchmark.Security.Exchange.TimeZone);
-
-                    var dataConfig = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(
-                        securityBenchmark.Security.Symbol,
-                        _algorithm.LiveMode ? Resolution.Minute : Resolution.Hour,
-                        isInternalFeed: true,
-                        fillForward: false).First();
+                        false,
+                        dataConfig.DataTimeZone).ConvertToUtc(securityBenchmark.Security.Exchange.TimeZone);
 
                     if (dataConfig != null)
                     {
@@ -461,6 +485,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     {
                         if (_dataManager.RemoveSubscription(subscription.Configuration, universe))
                         {
+                            _internalSubscriptionManager.RemovedSubscriptionRequest(subscription);
                             member.IsTradable = false;
                         }
                     }

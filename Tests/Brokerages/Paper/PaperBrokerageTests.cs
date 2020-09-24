@@ -86,15 +86,19 @@ namespace QuantConnect.Tests.Brokerages.Paper
 
             var marketHoursDatabase = MarketHoursDatabase.FromDataFolder();
             var symbolPropertiesDataBase = SymbolPropertiesDatabase.FromDataFolder();
+            var dataPermissionManager = new DataPermissionManager();
             var dataManager = new DataManager(feed,
                 new UniverseSelection(
                     algorithm,
-                    new SecurityService(algorithm.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algorithm, RegisteredSecurityDataTypesProvider.Null, new SecurityCacheProvider(algorithm.Portfolio))),
+                    new SecurityService(algorithm.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algorithm, RegisteredSecurityDataTypesProvider.Null, new SecurityCacheProvider(algorithm.Portfolio)),
+                    dataPermissionManager,
+                    new DefaultDataProvider()),
                 algorithm,
                 algorithm.TimeKeeper,
                 marketHoursDatabase,
                 true,
-                RegisteredSecurityDataTypesProvider.Null);
+                RegisteredSecurityDataTypesProvider.Null,
+                dataPermissionManager);
             var synchronizer = new NullSynchronizer(algorithm, dividend);
 
             algorithm.SubscriptionManager.SetDataManager(dataManager);
