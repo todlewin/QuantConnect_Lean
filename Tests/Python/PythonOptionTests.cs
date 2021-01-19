@@ -37,7 +37,7 @@ namespace QuantConnect.Tests.Python
                 //Filter function that returns a list of symbols
                 var module = PythonEngine.ModuleFromString(Guid.NewGuid().ToString(),
                     "def filter(universe):\n" +
-                    "   universe = universe.WeeklysOnly().Expiration(0, 10)\n" + 
+                    "   universe = universe.WeeklysOnly().Expiration(0, 10)\n" +
                     "   return [symbol for symbol in universe\n"+
                     "           if symbol.ID.OptionRight != OptionRight.Put\n" +
                     "           and universe.Underlying.Price - symbol.ID.StrikePrice < 10]\n"
@@ -76,7 +76,7 @@ namespace QuantConnect.Tests.Python
         {
             var parameter = new RegressionTests.AlgorithmStatisticsTestParameters("FilterUniverseRegressionAlgorithm",
                 new Dictionary<string, string> {
-                    {"Total Trades", "1"},
+                    {"Total Trades", "4"},
                     {"Average Win", "0%"},
                     {"Average Loss", "0%"},
                     {"Compounding Annual Return", "0%"},
@@ -95,8 +95,8 @@ namespace QuantConnect.Tests.Python
                     {"Information Ratio", "0"},
                     {"Tracking Error", "0"},
                     {"Treynor Ratio", "0"},
-                    {"Total Fees", "$1.00"},
-                    {"OrderListHash", "-379511851"}
+                    {"Total Fees", "$2.00"},
+                    {"OrderListHash", "-546310956"}
                     },
                     Language.Python,
                     AlgorithmStatus.Completed);
@@ -113,7 +113,7 @@ namespace QuantConnect.Tests.Python
         {
             var parameter = new RegressionTests.AlgorithmStatisticsTestParameters("BasicTemplateOptionsFilterUniverseAlgorithm",
                 new Dictionary<string, string> {
-                    {"Total Trades", "1"},
+                    {"Total Trades", "2"},
                     {"Average Win", "0%"},
                     {"Average Loss", "0%"},
                     {"Compounding Annual Return", "0%"},
@@ -152,7 +152,7 @@ namespace QuantConnect.Tests.Python
                     {"Mean Population Magnitude", "0%"},
                     {"Rolling Averaged Population Direction", "0%"},
                     {"Rolling Averaged Population Magnitude", "0%"},
-                    {"OrderListHash", "1935621950"}
+                    {"OrderListHash", "-572432979"}
                 },
                 Language.Python,
                 AlgorithmStatus.Completed);

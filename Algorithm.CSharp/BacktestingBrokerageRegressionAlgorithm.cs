@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -75,7 +75,7 @@ namespace QuantConnect.Algorithm.CSharp
         /// </summary>
         /// <param name="data">Slice object keyed by symbol containing the stock data</param>
         public override void OnData(Slice data)
-        {   
+        {
             if (!_equityBought && data.ContainsKey(_spy)) {
                 //Buy our Equity
                 var quantity = CalculateOrderQuantity(_spy, .1m);
@@ -114,7 +114,7 @@ namespace QuantConnect.Algorithm.CSharp
         /// </summary>
         /// <param name="orderEvent">OrderEvent object that contains all the information about the event</param>
         public override void OnOrderEvent(OrderEvent orderEvent)
-        {   
+        {
             // Get the order from our transactions
             var order = Transactions.GetOrderById(orderEvent.OrderId);
 
@@ -147,7 +147,7 @@ namespace QuantConnect.Algorithm.CSharp
 
                 // All PartiallyFilled orders should have a LastFillTime
                 case OrderStatus.PartiallyFilled:
-                    if (order.LastFillTime == null) 
+                    if (order.LastFillTime == null)
                     {
                         throw new Exception("LastFillTime should not be null");
                     }
@@ -183,9 +183,9 @@ namespace QuantConnect.Algorithm.CSharp
                 throw new Exception("OptionExercise order price should be strike price!!");
             }
 
-            if (orderEvent.Quantity != 1)
+            if (orderEvent.Quantity != -1)
             {
-                throw new Exception("OrderEvent Quantity should be 1");
+                throw new Exception("OrderEvent Quantity should be -1");
             }
         }
 
@@ -303,21 +303,39 @@ namespace QuantConnect.Algorithm.CSharp
             {"Drawdown", "0.400%"},
             {"Expectancy", "-1"},
             {"Net Profit", "-0.323%"},
-            {"Sharpe Ratio", "-0.888"},
+            {"Sharpe Ratio", "-11.098"},
             {"Probabilistic Sharpe Ratio", "0%"},
             {"Loss Rate", "100%"},
             {"Win Rate", "0%"},
             {"Profit-Loss Ratio", "0"},
-            {"Alpha", "0.035"},
-            {"Beta", "0.183"},
-            {"Annual Standard Deviation", "0.004"},
+            {"Alpha", "-0.002"},
+            {"Beta", "0.099"},
+            {"Annual Standard Deviation", "0.002"},
             {"Annual Variance", "0"},
-            {"Information Ratio", "12.058"},
-            {"Tracking Error", "0.017"},
-            {"Treynor Ratio", "-0.018"},
+            {"Information Ratio", "9.899"},
+            {"Tracking Error", "0.019"},
+            {"Treynor Ratio", "-0.23"},
             {"Total Fees", "$2.00"},
             {"Fitness Score", "0.213"},
-            {"OrderListHash", "-1514011542"}
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "79228162514264337593543950335"},
+            {"Return Over Maximum Drawdown", "-73.456"},
+            {"Portfolio Turnover", "0.426"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "-1979829476"}
         };
     }
 }
