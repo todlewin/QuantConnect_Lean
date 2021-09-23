@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -173,7 +173,7 @@ namespace QuantConnect.Lean.Engine
                 TimeLimit.StartNewTimeStep();
 
                 //Check this backtest is still running:
-                if (_algorithm.Status != AlgorithmStatus.Running)
+                if (_algorithm.Status != AlgorithmStatus.Running && _algorithm.RunTimeError == null)
                 {
                     Log.Error($"AlgorithmManager.Run(): Algorithm state changed to {_algorithm.Status} at {timeSlice.Time.ToStringInvariant()}");
                     break;
@@ -246,6 +246,7 @@ namespace QuantConnect.Lean.Engine
                     foreach (var security in timeSlice.SecurityChanges.AddedSecurities)
                     {
                         security.IsTradable = true;
+
                         // uses TryAdd, so don't need to worry about duplicates here
                         algorithm.Securities.Add(security);
                     }
@@ -259,6 +260,7 @@ namespace QuantConnect.Lean.Engine
                         }
                     }
 
+                    leanManager.OnSecuritiesChanged(timeSlice.SecurityChanges);
                     realtime.OnSecuritiesChanged(timeSlice.SecurityChanges);
                     results.OnSecuritiesChanged(timeSlice.SecurityChanges);
                 }
@@ -294,15 +296,11 @@ namespace QuantConnect.Lean.Engine
                 }
 
                 // poke each cash object to update from the recent security data
-                foreach (var kvp in algorithm.Portfolio.CashBook)
+                foreach (var cash in algorithm.Portfolio.CashBook.Values.Where(x => x.CurrencyConversion != null))
                 {
-                    var cash = kvp.Value;
-                    var updateData = cash.ConversionRateSecurity?.GetLastData();
-                    if (updateData != null)
-                    {
-                        cash.Update(updateData);
-                    }
+                    cash.Update();
                 }
+
                 // security prices got updated
                 algorithm.Portfolio.InvalidateTotalPortfolioValue();
 
@@ -316,18 +314,17 @@ namespace QuantConnect.Lean.Engine
                 ProcessDelistedSymbols(algorithm, delistings);
 
                 // process split warnings for options
-                ProcessSplitSymbols(algorithm, splitWarnings);
+                ProcessSplitSymbols(algorithm, splitWarnings, delistings);
 
                 //Check if the user's signalled Quit: loop over data until day changes.
-                if (algorithm.Status == AlgorithmStatus.Stopped)
+                if (_algorithm.Status != AlgorithmStatus.Running && _algorithm.RunTimeError == null)
                 {
-                    Log.Trace("AlgorithmManager.Run(): Algorithm quit requested.");
+                    Log.Error($"AlgorithmManager.Run(): Algorithm state changed to {_algorithm.Status} at {timeSlice.Time.ToStringInvariant()}");
                     break;
                 }
                 if (algorithm.RunTimeError != null)
                 {
-                    _algorithm.Status = AlgorithmStatus.RuntimeError;
-                    Log.Trace($"AlgorithmManager.Run(): Algorithm encountered a runtime error at {timeSlice.Time.ToStringInvariant()}. Error: {algorithm.RunTimeError}");
+                    Log.Error($"AlgorithmManager.Run(): Stopping, encountered a runtime error at {algorithm.UtcTime} UTC.");
                     return;
                 }
 
@@ -358,10 +355,7 @@ namespace QuantConnect.Lean.Engine
                         }
                         catch (Exception err)
                         {
-                            algorithm.RunTimeError = err;
-                            _algorithm.Status = AlgorithmStatus.RuntimeError;
-                            var locator = executingMarginCall ? "Portfolio.MarginCallModel.ExecuteMarginCall" : "OnMarginCall";
-                            Log.Error($"AlgorithmManager.Run(): RuntimeError: {locator}: {err}");
+                            algorithm.SetRuntimeError(err, executingMarginCall ? "Portfolio.MarginCallModel.ExecuteMarginCall" : "OnMarginCall");
                             return;
                         }
                     }
@@ -374,9 +368,7 @@ namespace QuantConnect.Lean.Engine
                         }
                         catch (Exception err)
                         {
-                            algorithm.RunTimeError = err;
-                            _algorithm.Status = AlgorithmStatus.RuntimeError;
-                            Log.Error("AlgorithmManager.Run(): RuntimeError: OnMarginCallWarning: " + err);
+                            algorithm.SetRuntimeError(err, "OnMarginCallWarning");
                             return;
                         }
                     }
@@ -408,9 +400,7 @@ namespace QuantConnect.Lean.Engine
                     }
                     catch (Exception err)
                     {
-                        algorithm.RunTimeError = err;
-                        _algorithm.Status = AlgorithmStatus.RuntimeError;
-                        Log.Error("AlgorithmManager.Run(): RuntimeError: OnSecuritiesChanged event: " + err);
+                        algorithm.SetRuntimeError(err, "OnSecuritiesChanged");
                         return;
                     }
                 }
@@ -484,9 +474,7 @@ namespace QuantConnect.Lean.Engine
                     }
                     catch (Exception err)
                     {
-                        algorithm.RunTimeError = err;
-                        _algorithm.Status = AlgorithmStatus.RuntimeError;
-                        Log.Error("AlgorithmManager.Run(): RuntimeError: Split event: " + err);
+                        algorithm.SetRuntimeError(err, "Split event");
                         return;
                     }
                 }
@@ -520,9 +508,7 @@ namespace QuantConnect.Lean.Engine
                 }
                 catch (Exception err)
                 {
-                    algorithm.RunTimeError = err;
-                    _algorithm.Status = AlgorithmStatus.RuntimeError;
-                    Log.Error("AlgorithmManager.Run(): RuntimeError: Consolidators update: " + err);
+                    algorithm.SetRuntimeError(err, "Consolidators update");
                     return;
                 }
 
@@ -547,9 +533,7 @@ namespace QuantConnect.Lean.Engine
                     }
                     catch (Exception err)
                     {
-                        algorithm.RunTimeError = err;
-                        _algorithm.Status = AlgorithmStatus.RuntimeError;
-                        Log.Error("AlgorithmManager.Run(): RuntimeError: Custom Data: " + err);
+                        algorithm.SetRuntimeError(err, "Custom Data");
                         return;
                     }
                 }
@@ -572,9 +556,7 @@ namespace QuantConnect.Lean.Engine
                 }
                 catch (Exception err)
                 {
-                    algorithm.RunTimeError = err;
-                    _algorithm.Status = AlgorithmStatus.RuntimeError;
-                    Log.Error("AlgorithmManager.Run(): RuntimeError: Dividends/Splits/Delistings: " + err);
+                    algorithm.SetRuntimeError(err, "Dividends/Splits/Delistings");
                     return;
                 }
 
@@ -594,9 +576,7 @@ namespace QuantConnect.Lean.Engine
                 }
                 catch (Exception err)
                 {
-                    algorithm.RunTimeError = err;
-                    _algorithm.Status = AlgorithmStatus.RuntimeError;
-                    Log.Error("AlgorithmManager.Run(): RuntimeError: New Style Mode: " + err);
+                    algorithm.SetRuntimeError(err, "methodInvokers");
                     return;
                 }
 
@@ -613,9 +593,7 @@ namespace QuantConnect.Lean.Engine
                 }
                 catch (Exception err)
                 {
-                    algorithm.RunTimeError = err;
-                    _algorithm.Status = AlgorithmStatus.RuntimeError;
-                    Log.Error("AlgorithmManager.Run(): RuntimeError: Slice: " + err);
+                    algorithm.SetRuntimeError(err, "OnData");
                     return;
                 }
 
@@ -649,9 +627,7 @@ namespace QuantConnect.Lean.Engine
             }
             catch (Exception err)
             {
-                _algorithm.Status = AlgorithmStatus.RuntimeError;
-                algorithm.RunTimeError = new Exception("Error running OnEndOfAlgorithm(): " + err.Message, err.InnerException);
-                Log.Error("AlgorithmManager.OnEndOfAlgorithm(): " + err);
+                algorithm.SetRuntimeError(err, "OnEndOfAlgorithm");
                 return;
             }
 
@@ -710,7 +686,7 @@ namespace QuantConnect.Lean.Engine
                 //Algorithm could be null after it's initialized and they call Run on us
                 if (state != AlgorithmStatus.Running && _algorithm != null)
                 {
-                    _algorithm.Status = state;
+                    _algorithm.SetStatus(state);
                 }
             }
         }
@@ -818,8 +794,7 @@ namespace QuantConnect.Lean.Engine
                     }
                     catch (Exception err)
                     {
-                        Log.Error(err);
-                        algorithm.RunTimeError = err;
+                        algorithm.SetRuntimeError(err, $"Warmup history request. Slice.Time {slice.Time}");
                         yield break;
                     }
 
@@ -978,13 +953,20 @@ namespace QuantConnect.Lean.Engine
         {
             foreach (var delisting in newDelistings.Values)
             {
+                Log.Trace($"AlgorithmManager.HandleDelistedSymbols(): Delisting {delisting.Type}: {delisting.Symbol.Value}, UtcTime: {algorithm.UtcTime}, DelistingTime: {delisting.Time}");
+                if (algorithm.LiveMode)
+                {
+                    // skip automatic handling of delisting event in live trading
+                    // Lean will not exercise, liquidate or cancel open orders
+                    continue;
+                }
+
                 // submit an order to liquidate on market close
                 if (delisting.Type == DelistingType.Warning)
                 {
-                    if (!delistings.Any(x => x.Symbol == delisting.Symbol && x.Type == delisting.Type))
+                    if (delistings.All(x => x.Symbol != delisting.Symbol))
                     {
                         delistings.Add(delisting);
-                        Log.Trace($"AlgorithmManager.Run(): Security delisting warning: {delisting.Symbol.Value}, UtcTime: {algorithm.UtcTime}, DelistingTime: {delisting.Time}");
                     }
                 }
                 else
@@ -1013,7 +995,6 @@ namespace QuantConnect.Lean.Engine
                         }
                     }
 
-                    Log.Trace($"AlgorithmManager.Run(): Security delisted: {delisting.Symbol.Value}, UtcTime: {algorithm.UtcTime}, DelistingTime: {delisting.Time}");
                     var cancelledOrders = algorithm.Transactions.CancelOpenOrders(delisting.Symbol);
                     foreach (var cancelledOrder in cancelledOrders)
                     {
@@ -1037,8 +1018,7 @@ namespace QuantConnect.Lean.Engine
                     continue;
                 }
 
-                // liquidate ASAP on the last trading day
-                if (security.LocalTime < delisting.Time.Date)
+                if (security.LocalTime < delisting.GetLiquidationTime(security.Exchange.Hours))
                 {
                     continue;
                 }
@@ -1053,18 +1033,8 @@ namespace QuantConnect.Lean.Engine
                     continue;
                 }
 
-                var orderType = OrderType.Market;
-                var tag = "Liquidate from delisting";
-                if (security.Type == SecurityType.Option || security.Type == SecurityType.FutureOption)
-                {
-                    // tx handler will determine auto exercise/assignment
-                    tag = "Option Expired";
-                    orderType = OrderType.OptionExercise;
-                }
-
                 // submit an order to liquidate on market close or exercise (for options)
-                var request = new SubmitOrderRequest(orderType, security.Type, security.Symbol,
-                    -security.Holdings.Quantity, 0, 0, algorithm.UtcTime, tag);
+                var request = security.CreateDelistedSecurityOrderRequest(algorithm.UtcTime);
 
                 delistings.RemoveAt(i);
                 algorithm.Transactions.ProcessRequest(request);
@@ -1099,7 +1069,7 @@ namespace QuantConnect.Lean.Engine
         /// <summary>
         /// Liquidate option contact holdings who's underlying security has split
         /// </summary>
-        private void ProcessSplitSymbols(IAlgorithm algorithm, List<Split> splitWarnings)
+        private void ProcessSplitSymbols(IAlgorithm algorithm, List<Split> splitWarnings, List<Delisting> delistings)
         {
             // NOTE: This method assumes option contracts have the same core trading hours as their underlying contract
             //       This is a small performance optimization to prevent scanning every contract on every time step,
@@ -1139,7 +1109,7 @@ namespace QuantConnect.Lean.Engine
                         $", Active: {algorithm.UniverseManager.ActiveSecurities.Keys.Contains(split.Symbol)}");
                 }
 
-                var latestMarketOnCloseTimeRoundedDownByResolution = nextMarketClose.Subtract(MarketOnCloseOrder.DefaultSubmissionTimeBuffer)
+                var latestMarketOnCloseTimeRoundedDownByResolution = nextMarketClose.Subtract(MarketOnCloseOrder.SubmissionTimeBuffer)
                     .RoundDownInTimeZone(configs.GetHighestResolution().ToTimeSpan(), security.Exchange.TimeZone, configs.First().DataTimeZone);
 
                 // we don't need to do anyhing until the market closes
@@ -1147,7 +1117,7 @@ namespace QuantConnect.Lean.Engine
 
                 // fetch all option derivatives of the underlying with holdings (excluding the canonical security)
                 var derivatives = algorithm.Securities.Where(kvp => kvp.Key.HasUnderlying &&
-                    (kvp.Key.SecurityType == SecurityType.Option || kvp.Key.SecurityType == SecurityType.FutureOption) &&
+                    kvp.Key.SecurityType.IsOption() &&
                     kvp.Key.Underlying == security.Symbol &&
                     !kvp.Key.Underlying.IsCanonical() &&
                     kvp.Value.HoldStock
@@ -1157,6 +1127,13 @@ namespace QuantConnect.Lean.Engine
                 {
                     var optionContractSymbol = kvp.Key;
                     var optionContractSecurity = (Option) kvp.Value;
+
+                    if (delistings.Any(x => x.Symbol == optionContractSymbol
+                        && x.Time.Date == optionContractSecurity.LocalTime.Date))
+                    {
+                        // if the option is going to be delisted today we skip sending the market on close order
+                        continue;
+                    }
 
                     // close any open orders
                     algorithm.Transactions.CancelOpenOrders(optionContractSymbol, "Canceled due to impending split. Separate MarketOnClose order submitted to liquidate position.");

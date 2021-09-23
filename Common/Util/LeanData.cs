@@ -71,11 +71,11 @@ namespace QuantConnect.Util
                             var tick = (Tick) data;
                             if (tick.TickType == TickType.Trade)
                             {
-                                return ToCsv(milliseconds, Scale(tick.LastPrice), tick.Quantity, tick.Exchange, tick.SaleCondition, tick.Suspicious ? "1" : "0");
+                                return ToCsv(milliseconds, Scale(tick.LastPrice), tick.Quantity, tick.ExchangeCode, tick.SaleCondition, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.Quote)
                             {
-                                return ToCsv(milliseconds, Scale(tick.BidPrice), tick.BidSize, Scale(tick.AskPrice), tick.AskSize, tick.Exchange, tick.SaleCondition, tick.Suspicious ? "1" : "0");
+                                return ToCsv(milliseconds, Scale(tick.BidPrice), tick.BidSize, Scale(tick.AskPrice), tick.AskSize, tick.ExchangeCode, tick.SaleCondition, tick.Suspicious ? "1" : "0");
                             }
                             break;
                         case Resolution.Minute:
@@ -119,15 +119,15 @@ namespace QuantConnect.Util
                             var tick = data as Tick;
                             if (tick == null)
                             {
-                                throw new ArgumentException("Cryto tick could not be created", nameof(data));
+                                throw new ArgumentException("Crypto tick could not be created", nameof(data));
                             }
                             if (tick.TickType == TickType.Trade)
                             {
-                                return ToCsv(milliseconds, tick.LastPrice, tick.Quantity);
+                                return ToCsv(milliseconds, tick.LastPrice, tick.Quantity, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.Quote)
                             {
-                                return ToCsv(milliseconds, tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize);
+                                return ToCsv(milliseconds, tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize, tick.Suspicious ? "1" : "0");
                             }
                             throw new ArgumentException("Cryto tick could not be created");
                         case Resolution.Second:
@@ -204,7 +204,29 @@ namespace QuantConnect.Util
                     }
                     break;
 
+                case SecurityType.Index:
+                    switch (resolution)
+                    {
+                        case Resolution.Tick:
+                            var tick = (Tick) data;
+                            return ToCsv(milliseconds, tick.LastPrice, tick.Quantity, string.Empty, string.Empty, "0");
+                        case Resolution.Second:
+                        case Resolution.Minute:
+                            var bar = data as TradeBar;
+                            if (bar == null)
+                            {
+                                throw new ArgumentException("Expected data of type 'TradeBar'", nameof(data));
+                            }
+                            return ToCsv(milliseconds, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume);
+                        case Resolution.Hour:
+                        case Resolution.Daily:
+                            var bigTradeBar = data as TradeBar;
+                            return ToCsv(longTime, bigTradeBar.Open, bigTradeBar.High, bigTradeBar.Low, bigTradeBar.Close, bigTradeBar.Volume);
+                    }
+                    break;
+
                 case SecurityType.Option:
+                case SecurityType.IndexOption:
                     switch (resolution)
                     {
                         case Resolution.Tick:
@@ -212,12 +234,12 @@ namespace QuantConnect.Util
                             if (tick.TickType == TickType.Trade)
                             {
                                 return ToCsv(milliseconds,
-                                    Scale(tick.LastPrice), tick.Quantity, tick.Exchange, tick.SaleCondition, tick.Suspicious ? "1" : "0");
+                                    Scale(tick.LastPrice), tick.Quantity, tick.ExchangeCode, tick.SaleCondition, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.Quote)
                             {
                                 return ToCsv(milliseconds,
-                                    Scale(tick.BidPrice), tick.BidSize, Scale(tick.AskPrice), tick.AskSize, tick.Exchange, tick.Suspicious ? "1" : "0");
+                                    Scale(tick.BidPrice), tick.BidSize, Scale(tick.AskPrice), tick.AskSize, tick.ExchangeCode, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.OpenInterest)
                             {
@@ -283,12 +305,12 @@ namespace QuantConnect.Util
                             if (tick.TickType == TickType.Trade)
                             {
                                 return ToCsv(milliseconds,
-                                    tick.LastPrice, tick.Quantity, tick.Exchange, tick.SaleCondition, tick.Suspicious ? "1" : "0");
+                                    tick.LastPrice, tick.Quantity, tick.ExchangeCode, tick.SaleCondition, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.Quote)
                             {
                                 return ToCsv(milliseconds,
-                                    tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize, tick.Exchange, tick.Suspicious ? "1" : "0");
+                                    tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize, tick.ExchangeCode, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.OpenInterest)
                             {
@@ -354,12 +376,12 @@ namespace QuantConnect.Util
                             if (tick.TickType == TickType.Trade)
                             {
                                 return ToCsv(milliseconds,
-                                             tick.LastPrice, tick.Quantity, tick.Exchange, tick.SaleCondition, tick.Suspicious ? "1": "0");
+                                             tick.LastPrice, tick.Quantity, tick.ExchangeCode, tick.SaleCondition, tick.Suspicious ? "1": "0");
                             }
                             if (tick.TickType == TickType.Quote)
                             {
                                 return ToCsv(milliseconds,
-                                             tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize, tick.Exchange, tick.Suspicious ? "1" : "0");
+                                             tick.BidPrice, tick.BidSize, tick.AskPrice, tick.AskSize, tick.ExchangeCode, tick.Suspicious ? "1" : "0");
                             }
                             if (tick.TickType == TickType.OpenInterest)
                             {
@@ -492,12 +514,14 @@ namespace QuantConnect.Util
             {
                 case SecurityType.Base:
                 case SecurityType.Equity:
+                case SecurityType.Index:
                 case SecurityType.Forex:
                 case SecurityType.Cfd:
                 case SecurityType.Crypto:
                     return !isHourOrDaily ? Path.Combine(directory, symbol.Value.ToLowerInvariant()) : directory;
 
                 case SecurityType.Option:
+                case SecurityType.IndexOption:
                     // options uses the underlying symbol for pathing.
                     return !isHourOrDaily ? Path.Combine(directory, symbol.Underlying.Value.ToLowerInvariant()) : directory;
 
@@ -565,6 +589,7 @@ namespace QuantConnect.Util
             {
                 case SecurityType.Base:
                 case SecurityType.Equity:
+                case SecurityType.Index:
                 case SecurityType.Forex:
                 case SecurityType.Cfd:
                 case SecurityType.Crypto:
@@ -581,7 +606,7 @@ namespace QuantConnect.Util
                     return Invariant($"{formattedDate}_{symbol.Value.ToLowerInvariant()}_{resolution.ResolutionToLower()}_{tickType.TickTypeToLower()}.csv");
 
                 case SecurityType.Option:
-                    // We want the future option ticker as the lookup name inside the ZIP file
+                case SecurityType.IndexOption:
                     var optionPath = symbol.Underlying.Value.ToLowerInvariant();
 
                     if (isHourOrDaily)
@@ -676,6 +701,7 @@ namespace QuantConnect.Util
             switch (symbol.ID.SecurityType)
             {
                 case SecurityType.Base:
+                case SecurityType.Index:
                 case SecurityType.Equity:
                 case SecurityType.Forex:
                 case SecurityType.Cfd:
@@ -693,6 +719,7 @@ namespace QuantConnect.Util
 
                     return $"{formattedDate}_{tickTypeString}.zip";
                 case SecurityType.Option:
+                case SecurityType.IndexOption:
                     if (isHourOrDaily)
                     {
                         var optionPath = symbol.Underlying.Value.ToLowerInvariant();
@@ -735,7 +762,18 @@ namespace QuantConnect.Util
             }
 
             var zipFileName = date.ToStringInvariant(DateFormat.EightCharacter);
-            tickType = tickType ?? (securityType == SecurityType.Forex || securityType == SecurityType.Cfd ? TickType.Quote : TickType.Trade);
+
+            if (tickType == null)
+            {
+                if (securityType == SecurityType.Forex || securityType == SecurityType.Cfd) {
+                    tickType = TickType.Quote;
+                }
+                else
+                {
+                    tickType = TickType.Trade;
+                }
+            }
+
             var suffix = Invariant($"_{tickType.Value.TickTypeToLower()}.zip");
             return zipFileName + suffix;
         }
@@ -769,6 +807,7 @@ namespace QuantConnect.Util
             {
                 case SecurityType.Option:
                 case SecurityType.FutureOption:
+                case SecurityType.IndexOption:
                     if (isHourlyOrDaily)
                     {
                         var style = (OptionStyle)Enum.Parse(typeof(OptionStyle), parts[2], true);
@@ -919,6 +958,74 @@ namespace QuantConnect.Util
         /// Parses file name into a <see cref="Security"/> and DateTime
         /// </summary>
         /// <param name="fileName">File name to be parsed</param>
+        /// <param name="securityType">The securityType as parsed from the fileName</param>
+        public static bool TryParseSecurityType(string fileName, out SecurityType securityType)
+        {
+            securityType = SecurityType.Base;
+
+            try
+            {
+                var info = SplitDataPath(fileName);
+
+                // find the securityType and parse it
+                var typeString = info.Find(x => SecurityTypeAsDataPath.Contains(x.ToLowerInvariant()));
+                securityType = ParseDataSecurityType(typeString);
+            }
+            catch (Exception e)
+            {
+                Log.Error($"LeanData.TryParsePath(): Error encountered while parsing the path {fileName}. Error: {e.GetBaseException()}");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Parses file name into a <see cref="Security"/> and DateTime
+        /// </summary>
+        /// <param name="filePath">File path to be parsed</param>
+        /// <param name="symbol">The symbol as parsed from the fileName</param>
+        /// <param name="date">Date of data in the file path. Only returned if the resolution is lower than Hourly</param>
+        /// <param name="resolution">The resolution of the symbol as parsed from the filePath</param>
+        /// <param name="tickType">The tick type</param>
+        /// <param name="dataType">The data type</param>
+        public static bool TryParsePath(string filePath, out Symbol symbol, out DateTime date,
+            out Resolution resolution, out TickType tickType, out Type dataType)
+        {
+            symbol = default;
+            tickType = default;
+            dataType = default;
+            date = default;
+            resolution = default;
+
+            try
+            {
+                if (!TryParsePath(filePath, out symbol, out date, out resolution))
+                {
+                    return false;
+                }
+
+                tickType = GetCommonTickType(symbol.SecurityType);
+                var fileName = Path.GetFileNameWithoutExtension(filePath);
+                if (fileName.Contains("_"))
+                {
+                    tickType = (TickType)Enum.Parse(typeof(TickType), fileName.Split('_')[1], true);
+                }
+
+                dataType = GetDataType(resolution, tickType);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug($"LeanData.TryParsePath(): Error encountered while parsing the path {filePath}. Error: {ex.GetBaseException()}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Parses file name into a <see cref="Security"/> and DateTime
+        /// </summary>
+        /// <param name="fileName">File name to be parsed</param>
         /// <param name="symbol">The symbol as parsed from the fileName</param>
         /// <param name="date">Date of data in the file path. Only returned if the resolution is lower than Hourly</param>
         /// <param name="resolution">The resolution of the symbol as parsed from the filePath</param>
@@ -928,21 +1035,9 @@ namespace QuantConnect.Util
             resolution = Resolution.Daily;
             date = default(DateTime);
 
-            var pathSeparators = new[] { '/', '\\' };
-
             try
             {
-                // Removes file extension
-                fileName = fileName.Replace(fileName.GetExtension(), "");
-
-                // remove any relative file path
-                while (fileName.First() == '.' || pathSeparators.Any(x => x == fileName.First()))
-                {
-                    fileName = fileName.Remove(0, 1);
-                }
-
-                // split path into components
-                var info = fileName.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries).ToList();
+                var info = SplitDataPath(fileName);
 
                 // find where the useful part of the path starts - i.e. the securityType
                 var startIndex = info.FindIndex(x => SecurityTypeAsDataPath.Contains(x.ToLowerInvariant()));
@@ -1000,11 +1095,28 @@ namespace QuantConnect.Util
             }
             catch (Exception ex)
             {
-                Log.Error($"LeanData.TryParsePath(): Error encountered while parsing the path {fileName}. Error: {ex.GetBaseException()}");
+                Log.Debug($"LeanData.TryParsePath(): Error encountered while parsing the path {fileName}. Error: {ex.GetBaseException()}");
                 return false;
             }
 
             return true;
+        }
+
+        private static List<string> SplitDataPath(string fileName)
+        {
+            var pathSeparators = new[] { '/', '\\' };
+
+            // Removes file extension
+            fileName = fileName.Replace(fileName.GetExtension(), string.Empty);
+
+            // remove any relative file path
+            while (fileName.First() == '.' || pathSeparators.Any(x => x == fileName.First()))
+            {
+                fileName = fileName.Remove(0, 1);
+            }
+
+            // split path into components
+            return fileName.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries).ToList();
         }
     }
 }

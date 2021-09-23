@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -26,6 +26,7 @@ using QuantConnect.Logging;
 using QuantConnect.Securities;
 using QuantConnect.Util;
 using QuantConnect.Data.Fundamental;
+using QuantConnect.Data.Market;
 
 namespace QuantConnect.Lean.Engine.DataFeeds
 {
@@ -70,7 +71,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 algorithm.Securities,
                 algorithm.SubscriptionManager,
                 _securityService,
-                dataPermissionManager.GetResolution(Resolution.Minute));
+                Resolution.Minute);
             // TODO: next step is to merge currency internal subscriptions under the same 'internal manager' instance and we could move this directly into the DataManager class
             _internalSubscriptionManager = new InternalSubscriptionManager(_algorithm, internalConfigResolution);
         }
@@ -303,21 +304,13 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     continue;
                 }
 
-                // create the new security, the algorithm thread will add this at the appropriate time
-                Security security;
-                if (!pendingAdditions.TryGetValue(symbol, out security) && !_algorithm.Securities.TryGetValue(symbol, out security))
+                Security underlying = null;
+                if (symbol.HasUnderlying)
                 {
-                    // For now this is required for retro compatibility with usages of security.Subscriptions
-                    var configs = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(symbol,
-                        universe.UniverseSettings.Resolution,
-                        universe.UniverseSettings.FillForward,
-                        universe.UniverseSettings.ExtendedMarketHours,
-                        dataNormalizationMode: universe.UniverseSettings.DataNormalizationMode);
-
-                    security = _securityService.CreateSecurity(symbol, configs, universe.UniverseSettings.Leverage, (symbol.ID.SecurityType == SecurityType.Option || symbol.ID.SecurityType == SecurityType.FutureOption));
-
-                    pendingAdditions.Add(symbol, security);
+                    underlying = GetOrCreateSecurity(pendingAdditions, symbol.Underlying, universe.UniverseSettings);
                 }
+                // create the new security, the algorithm thread will add this at the appropriate time
+                var security = GetOrCreateSecurity(pendingAdditions, symbol, universe.UniverseSettings, underlying);
 
                 var addedSubscription = false;
                 var dataFeedAdded = false;
@@ -398,11 +391,26 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 var securityBenchmark = _algorithm.Benchmark as SecurityBenchmark;
                 if (securityBenchmark != null)
                 {
+                    var resolution = _algorithm.LiveMode ? Resolution.Minute : Resolution.Hour;
+
+                    // Check that the tradebar subscription we are using can support this resolution GH #5893
+                    var subscriptionType = _algorithm.SubscriptionManager.SubscriptionDataConfigService.LookupSubscriptionConfigDataTypes(securityBenchmark.Security.Type, resolution, securityBenchmark.Security.Symbol.IsCanonical()).First();
+                    var baseInstance = subscriptionType.Item1.GetBaseDataInstance();
+                    baseInstance.Symbol = securityBenchmark.Security.Symbol;
+                    var supportedResolutions = baseInstance.SupportedResolutions();
+                    if (!supportedResolutions.Contains(resolution))
+                    {
+                        resolution = supportedResolutions.OrderByDescending(x => x).First();
+                    }
+
+                    var subscriptionList = new List<Tuple<Type, TickType>>() {subscriptionType};
                     var dataConfig = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(
                         securityBenchmark.Security.Symbol,
-                        _dataPermissionManager.GetResolution(_algorithm.LiveMode ? Resolution.Minute : Resolution.Hour),
+                        resolution,
                         isInternalFeed: true,
-                        fillForward: false).First();
+                        fillForward: false,
+                        subscriptionDataTypes: subscriptionList
+                        ).First();
 
                     // we want to start from the previous tradable bar so the benchmark security
                     // never has 0 price
@@ -493,10 +501,29 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                         }
                     }
                 }
-
-                // remove symbol mappings for symbols removed from universes // TODO : THIS IS BAD!
-                SymbolCache.TryRemove(member.Symbol);
             }
+        }
+
+        private Security GetOrCreateSecurity(Dictionary<Symbol, Security> pendingAdditions, Symbol symbol, UniverseSettings universeSettings, Security underlying = null)
+        {
+            // create the new security, the algorithm thread will add this at the appropriate time
+            Security security;
+            if (!pendingAdditions.TryGetValue(symbol, out security) && !_algorithm.Securities.TryGetValue(symbol, out security))
+            {
+                // For now this is required for retro compatibility with usages of security.Subscriptions
+                var configs = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(symbol,
+                    universeSettings.Resolution,
+                    universeSettings.FillForward,
+                    universeSettings.ExtendedMarketHours,
+                    dataNormalizationMode: universeSettings.DataNormalizationMode,
+                    subscriptionDataTypes: universeSettings.SubscriptionDataTypes);
+
+                security = _securityService.CreateSecurity(symbol, configs, universeSettings.Leverage, symbol.ID.SecurityType.IsOption(), underlying);
+
+                pendingAdditions.Add(symbol, security);
+            }
+
+            return security;
         }
     }
 }

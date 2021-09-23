@@ -32,6 +32,7 @@ using QuantConnect.Orders.Fees;
 using QuantConnect.Securities;
 using QuantConnect.Util;
 using QuantConnect.Data;
+using QuantConnect.Packets;
 
 namespace QuantConnect.Brokerages.GDAX
 {
@@ -47,10 +48,14 @@ namespace QuantConnect.Brokerages.GDAX
         private readonly IAlgorithm _algorithm;
         private readonly CancellationTokenSource _canceller = new CancellationTokenSource();
         private readonly ConcurrentDictionary<Symbol, DefaultOrderBook> _orderBooks = new ConcurrentDictionary<Symbol, DefaultOrderBook>();
-        private readonly bool _isDataQueueHandler;
-        protected readonly IDataAggregator _aggregator;
-
         private readonly SymbolPropertiesDatabaseSymbolMapper _symbolMapper = new SymbolPropertiesDatabaseSymbolMapper(Market.GDAX);
+        private readonly bool _isDataQueueHandler;
+        private LiveNodePacket _job;
+
+        /// <summary>
+        /// Data Aggregator
+        /// </summary>
+        protected readonly IDataAggregator _aggregator;
 
         // GDAX has different rate limits for public and private endpoints
         // https://docs.gdax.com/#rate-limits
@@ -64,8 +69,7 @@ namespace QuantConnect.Brokerages.GDAX
         private readonly Task _fillMonitorTask;
         private readonly AutoResetEvent _fillMonitorResetEvent = new AutoResetEvent(false);
         private readonly int _fillMonitorTimeout = Config.GetInt("gdax-fill-monitor-timeout", 500);
-        private readonly ConcurrentDictionary<string, Order> _pendingOrders = new ConcurrentDictionary<string, Order>();
-        private long _lastEmittedFillTradeId;
+        private readonly ConcurrentDictionary<string, PendingOrder> _pendingOrders = new ConcurrentDictionary<string, PendingOrder>();
 
         #endregion
 
@@ -86,10 +90,12 @@ namespace QuantConnect.Brokerages.GDAX
         /// <param name="algorithm">the algorithm instance is required to retreive account type</param>
         /// <param name="priceProvider">The price provider for missing FX conversion rates</param>
         /// <param name="aggregator">consolidate ticks</param>
+        /// <param name="job">The live job packet</param>
         public GDAXBrokerage(string wssUrl, IWebSocket websocket, IRestClient restClient, string apiKey, string apiSecret, string passPhrase, IAlgorithm algorithm,
-            IPriceProvider priceProvider, IDataAggregator aggregator)
+            IPriceProvider priceProvider, IDataAggregator aggregator, LiveNodePacket job)
             : base(wssUrl, websocket, restClient, apiKey, apiSecret, "GDAX")
         {
+            _job = job;
             FillSplit = new ConcurrentDictionary<long, GDAXFill>();
             _passPhrase = passPhrase;
             _algorithm = algorithm;
@@ -106,8 +112,10 @@ namespace QuantConnect.Brokerages.GDAX
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        public override void OnMessage(object sender, WebSocketMessage e)
+        public override void OnMessage(object sender, WebSocketMessage webSocketMessage)
         {
+            var e = (WebSocketClientWrapper.TextMessage)webSocketMessage.Data;
+
             try
             {
                 var raw = JsonConvert.DeserializeObject<Messages.BaseMessage>(e.Message, JsonSettings);
@@ -314,7 +322,8 @@ namespace QuantConnect.Brokerages.GDAX
                 Order outOrder;
                 CachedOrderIDs.TryRemove(order.Id, out outOrder);
 
-                _pendingOrders.TryRemove(fill.OrderId, out outOrder);
+                PendingOrder removed;
+                _pendingOrders.TryRemove(fill.OrderId, out removed);
             }
 
             OnOrderEvent(orderEvent);
@@ -522,7 +531,7 @@ namespace QuantConnect.Brokerages.GDAX
             {
                 foreach (var order in GetOpenOrders())
                 {
-                    _pendingOrders.TryAdd(order.BrokerId.First(), order);
+                    _pendingOrders.TryAdd(order.BrokerId.First(), new PendingOrder(order));
                 }
 
                 while (!_ctsFillMonitor.IsCancellationRequested)
@@ -532,12 +541,12 @@ namespace QuantConnect.Brokerages.GDAX
                     foreach (var kvp in _pendingOrders)
                     {
                         var orderId = kvp.Key;
-                        var order = kvp.Value;
+                        var pendingOrder = kvp.Value;
 
                         var request = new RestRequest($"/fills?order_id={orderId}", Method.GET);
                         GetAuthenticationToken(request);
 
-                        var response = ExecuteRestRequest(request, GdaxEndpointType.Private);
+                        var response = ExecuteRestRequest(request, GdaxEndpointType.Private, false);
 
                         if (response.StatusCode != HttpStatusCode.OK)
                         {
@@ -552,16 +561,15 @@ namespace QuantConnect.Brokerages.GDAX
                         var fills = JsonConvert.DeserializeObject<List<Messages.Fill>>(response.Content);
                         foreach (var fill in fills.OrderBy(x => x.TradeId))
                         {
-                            if (fill.TradeId <= _lastEmittedFillTradeId)
+                            if (fill.TradeId <= pendingOrder.LastEmittedFillTradeId)
                             {
                                 continue;
                             }
 
-                            EmitFillOrderEvent(fill, order);
+                            EmitFillOrderEvent(fill, pendingOrder.Order);
 
-                            _lastEmittedFillTradeId = fill.TradeId;
+                            pendingOrder.LastEmittedFillTradeId = fill.TradeId;
                         }
-
                     }
                 }
             }
@@ -571,6 +579,17 @@ namespace QuantConnect.Brokerages.GDAX
             }
 
             Log.Trace("GDAXBrokerage.FillMonitorAction(): task ended");
+        }
+
+        private class PendingOrder
+        {
+            public Order Order { get; }
+            public long LastEmittedFillTradeId { get; set; }
+
+            public PendingOrder(Order order)
+            {
+                Order = order;
+            }
         }
     }
 }

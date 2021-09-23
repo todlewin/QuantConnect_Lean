@@ -79,19 +79,19 @@ namespace QuantConnect.Algorithm.CSharp
                 // things like manually added, auto added, internal, and any other boolean state we need to track against a single security)
                 throw new Exception("The underlying equity data should NEVER be removed in this algorithm because it was manually added");
             }
-            if (_expectedSecurities.AreDifferent(LinqExtensions.ToHashSet(Securities.Keys)))
+            if (_expectedSecurities.AreDifferent(Securities.Keys.ToHashSet()))
             {
                 var expected = string.Join(Environment.NewLine, _expectedSecurities.OrderBy(s => s.ToString()));
                 var actual = string.Join(Environment.NewLine, Securities.Keys.OrderBy(s => s.ToString()));
                 throw new Exception($"{Time}:: Detected differences in expected and actual securities{Environment.NewLine}Expected:{Environment.NewLine}{expected}{Environment.NewLine}Actual:{Environment.NewLine}{actual}");
             }
-            if (_expectedUniverses.AreDifferent(LinqExtensions.ToHashSet(UniverseManager.Keys)))
+            if (_expectedUniverses.AreDifferent(UniverseManager.Keys.ToHashSet()))
             {
                 var expected = string.Join(Environment.NewLine, _expectedUniverses.OrderBy(s => s.ToString()));
                 var actual = string.Join(Environment.NewLine, UniverseManager.Keys.OrderBy(s => s.ToString()));
                 throw new Exception($"{Time}:: Detected differences in expected and actual universes{Environment.NewLine}Expected:{Environment.NewLine}{expected}{Environment.NewLine}Actual:{Environment.NewLine}{actual}");
             }
-            if (_expectedData.AreDifferent(LinqExtensions.ToHashSet(data.Keys)))
+            if (_expectedData.AreDifferent(data.Keys.ToHashSet()))
             {
                 var expected = string.Join(Environment.NewLine, _expectedData.OrderBy(s => s.ToString()));
                 var actual = string.Join(Environment.NewLine, data.Keys.OrderBy(s => s.ToString()));
@@ -183,7 +183,7 @@ namespace QuantConnect.Algorithm.CSharp
                 if (changes.RemovedSecurities
                     .Where(x => x.Symbol.SecurityType == SecurityType.Option)
                     .ToHashSet(s => s.Symbol)
-                    .AreDifferent(LinqExtensions.ToHashSet(_expectedContracts)))
+                    .AreDifferent(_expectedContracts.ToHashSet()))
                 {
                     throw new Exception("Expected removed securities to equal expected contracts added");
                 }
@@ -210,7 +210,7 @@ namespace QuantConnect.Algorithm.CSharp
         /// </summary>
         public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
         {
-            {"Total Trades", "7"},
+            {"Total Trades", "6"},
             {"Average Win", "0%"},
             {"Average Loss", "0%"},
             {"Compounding Annual Return", "0%"},
@@ -229,7 +229,9 @@ namespace QuantConnect.Algorithm.CSharp
             {"Information Ratio", "0"},
             {"Tracking Error", "0"},
             {"Treynor Ratio", "0"},
-            {"Total Fees", "$4.00"},
+            {"Total Fees", "$6.00"},
+            {"Estimated Strategy Capacity", "$2000.00"},
+            {"Lowest Capacity Asset", "GOOCV 305RBQ2BZBZT2|GOOCV VP83T1ZUHROL"},
             {"Fitness Score", "0"},
             {"Kelly Criterion Estimate", "0"},
             {"Kelly Criterion Probability Value", "0"},
@@ -249,7 +251,7 @@ namespace QuantConnect.Algorithm.CSharp
             {"Mean Population Magnitude", "0%"},
             {"Rolling Averaged Population Direction", "0%"},
             {"Rolling Averaged Population Magnitude", "0%"},
-            {"OrderListHash", "-1331137505"}
+            {"OrderListHash", "1e7b3e90918777b9dbf46353a96f3329"}
         };
     }
 }

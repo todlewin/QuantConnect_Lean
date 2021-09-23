@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -74,6 +74,31 @@ namespace QuantConnect.Brokerages
         /// <summary>
         /// Transaction and submit/execution rules will use AlphaStream models
         /// </summary>
-        AlphaStreams
+        AlphaStreams,
+
+        /// <summary>
+        /// Transaction and submit/execution rules will use Zerodha models
+        /// </summary>
+        Zerodha,
+
+        /// <summary>
+        /// Transaction and submit/execution rules will use Samco models
+        /// </summary>
+        Samco,
+
+        /// <summary>
+        /// Transaction and submit/execution rules will use atreyu models
+        /// </summary>
+        Atreyu,
+
+        /// <summary>
+        /// Transaction and submit/execution rules will use TradingTechnologies models
+        /// </summary>
+        TradingTechnologies,
+        
+        /// <summary>
+        /// Transaction and submit/execution rules will use Kraken models
+        /// </summary>
+        Kraken
     }
 }

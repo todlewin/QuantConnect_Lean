@@ -15,9 +15,9 @@
 */
 
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace QuantConnect.Data.Auxiliary
 {
@@ -29,48 +29,58 @@ namespace QuantConnect.Data.Auxiliary
         /// <summary>
         /// Gets the date associated with this data
         /// </summary>
-        public DateTime Date { get; private set; }
+        public DateTime Date { get; }
 
         /// <summary>
         /// Gets the mapped symbol
         /// </summary>
-        public string MappedSymbol { get; private set; }
+        public string MappedSymbol { get; }
+
+        /// <summary>
+        /// Gets the mapped symbol
+        /// </summary>
+        public Exchange PrimaryExchange { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="MapFileRow"/> class.
         /// </summary>
-        public MapFileRow(DateTime date, string mappedSymbol)
+        public MapFileRow(DateTime date, string mappedSymbol, string primaryExchange, string market = QuantConnect.Market.USA)
+            : this(date, mappedSymbol, primaryExchange.GetPrimaryExchange(SecurityType.Equity, market))
+        { }
+        
+        /// <summary>
+        /// Initializes a new instance of the <see cref="MapFileRow"/> class.
+        /// </summary>
+        public MapFileRow(DateTime date, string mappedSymbol, Exchange primaryExchange = null)
         {
             Date = date;
             MappedSymbol = mappedSymbol.LazyToUpper();
+            PrimaryExchange = primaryExchange ?? Exchange.UNKNOWN;
         }
 
         /// <summary>
         /// Reads in the map_file for the specified equity symbol
         /// </summary>
-        public static IEnumerable<MapFileRow> Read(string permtick, string market)
+        public static IEnumerable<MapFileRow> Read(string file, string market)
         {
-            var path = MapFile.GetMapFilePath(permtick, market);
-            return File.Exists(path)
-                ? Read(path)
+            return File.Exists(file)
+                ? File.ReadAllLines(file).Where(l => !string.IsNullOrWhiteSpace(l)).Select(s => Parse(s, market))
                 : Enumerable.Empty<MapFileRow>();
-        }
-
-        /// <summary>
-        /// Reads in the map_file at the specified path
-        /// </summary>
-        public static IEnumerable<MapFileRow> Read(string path)
-        {
-            return File.ReadAllLines(path).Where(l => !string.IsNullOrWhiteSpace(l)).Select(Parse);
         }
 
         /// <summary>
         /// Parses the specified line into a MapFileRow
         /// </summary>
-        public static MapFileRow Parse(string line)
+        public static MapFileRow Parse(string line, string market)
         {
             var csv = line.Split(',');
-            return new MapFileRow(DateTime.ParseExact(csv[0], DateFormat.EightCharacter, null), csv[1]);
+            var primaryExchange = Exchange.UNKNOWN;
+            if (csv.Length == 3)
+            {
+                primaryExchange = csv[2].GetPrimaryExchange(SecurityType.Equity, market);
+            }
+
+            return new MapFileRow(DateTime.ParseExact(csv[0], DateFormat.EightCharacter, null), csv[1], primaryExchange);
         }
 
         #region Equality members
@@ -86,7 +96,9 @@ namespace QuantConnect.Data.Auxiliary
         {
             if (ReferenceEquals(null, other)) return false;
             if (ReferenceEquals(this, other)) return true;
-            return Date.Equals(other.Date) && string.Equals(MappedSymbol, other.MappedSymbol);
+            return Date.Equals(other.Date) &&
+                   string.Equals(MappedSymbol, other.MappedSymbol) &&
+                   string.Equals(PrimaryExchange, other.PrimaryExchange);
         }
 
         /// <summary>
@@ -115,7 +127,9 @@ namespace QuantConnect.Data.Auxiliary
         {
             unchecked
             {
-                return (Date.GetHashCode() * 397) ^ (MappedSymbol != null ? MappedSymbol.GetHashCode() : 0);
+                return (Date.GetHashCode() * 397) ^ 
+                       (MappedSymbol != null ? MappedSymbol.GetHashCode() : 0) ^
+                       (PrimaryExchange.GetHashCode());
             }
         }
 
@@ -142,12 +156,18 @@ namespace QuantConnect.Data.Auxiliary
         /// </summary>
         public string ToCsv()
         {
-            return $"{Date.ToStringInvariant(DateFormat.EightCharacter)},{MappedSymbol.ToLowerInvariant()}";
+            var encodedExchange = PrimaryExchange == Exchange.UNKNOWN? string.Empty : $",{PrimaryExchange.Code}";
+            return $"{Date.ToStringInvariant(DateFormat.EightCharacter)},{MappedSymbol.ToLowerInvariant()}{encodedExchange}";
         }
 
+        /// <summary>
+        /// Convert this row into string form
+        /// </summary>
+        /// <returns>resulting string</returns>
         public override string ToString()
         {
-            return Date.ToShortDateString() + ": " + MappedSymbol;
+            var mainExchange = PrimaryExchange == Exchange.UNKNOWN ? string.Empty : $" - {PrimaryExchange}";
+            return Date.ToShortDateString() + ": " + MappedSymbol + mainExchange;
         }
     }
 }

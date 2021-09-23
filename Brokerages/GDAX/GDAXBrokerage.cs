@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -141,7 +141,7 @@ namespace QuantConnect.Brokerages.GDAX
                 OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, orderFee, "GDAX Order Event") { Status = OrderStatus.Submitted });
                 Log.Trace($"Order submitted successfully - OrderId: {order.Id}");
 
-                _pendingOrders.TryAdd(brokerId, order);
+                _pendingOrders.TryAdd(brokerId, new PendingOrder(order));
                 _fillMonitorResetEvent.Set();
 
                 return true;
@@ -186,7 +186,7 @@ namespace QuantConnect.Brokerages.GDAX
                         OrderFee.Zero,
                         "GDAX Order Event") { Status = OrderStatus.Canceled });
 
-                    Order orderRemoved;
+                    PendingOrder orderRemoved;
                     _pendingOrders.TryRemove(id, out orderRemoved);
                 }
             }
@@ -292,10 +292,9 @@ namespace QuantConnect.Brokerages.GDAX
         {
             /*
              * On launching the algorithm the cash balances are pulled and stored in the cashbook.
-             * There are no pre-existing currency swaps as we don't know the entire historical breakdown that brought us here.
-             * Attempting to figure this out would be growing problem; every new trade would need to be processed.
+             * Try loading pre-existing currency swaps from the job packet if provided
              */
-            return new List<Holding>();
+            return base.GetAccountHoldings(_job?.BrokerageData, _algorithm?.Securities.Values);
         }
 
         /// <summary>
@@ -472,15 +471,13 @@ namespace QuantConnect.Brokerages.GDAX
                 throw new Exception($"GDAXBrokerage.GetAccountBaseCurrency(): request failed: [{(int)response.StatusCode}] {response.StatusDescription}, Content: {response.Content}, ErrorMessage: {response.ErrorMessage}");
             }
 
-            foreach (var item in JsonConvert.DeserializeObject<Messages.Account[]>(response.Content))
-            {
-                if (FiatCurrencies.Contains(item.Currency))
-                {
-                    return item.Currency;
-                }
-            }
+            var result = JsonConvert.DeserializeObject<Messages.Account[]>(response.Content)
+                .Where(account => FiatCurrencies.Contains(account.Currency))
+                // we choose the first fiat currency which has the largest available quantity
+                .OrderByDescending(account => account.Available).ThenBy(account => account.Currency)
+                .FirstOrDefault()?.Currency;
 
-            return Currencies.USD;
+            return result ?? Currencies.USD;
         }
 
         /// <summary>

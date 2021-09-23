@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -185,7 +185,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             }
 
             // before adding the configuration to the data feed let's assert it's valid
-            _dataPermissionManager.AssertConfiguration(request.Configuration);
+            _dataPermissionManager.AssertConfiguration(request.Configuration, request.StartTimeLocal, request.EndTimeLocal);
 
             subscription = _dataFeed.CreateSubscription(request);
 
@@ -458,24 +458,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     }
                 }
             }
-
-            MarketHoursDatabase.Entry marketHoursDbEntry;
-            if (!_marketHoursDatabase.TryGetEntry(symbol.ID.Market, symbol, symbol.ID.SecurityType, out marketHoursDbEntry))
-            {
-                if (symbol.SecurityType == SecurityType.Base)
-                {
-                    var baseInstance = dataTypes.Single().Item1.GetBaseDataInstance();
-                    baseInstance.Symbol = symbol;
-                    _marketHoursDatabase.SetEntryAlwaysOpen(symbol.ID.Market, null, SecurityType.Base, baseInstance.DataTimeZone());
-                }
-
-                marketHoursDbEntry = _marketHoursDatabase.GetEntry(symbol.ID.Market, symbol, symbol.ID.SecurityType);
-            }
+            var marketHoursDbEntry = _marketHoursDatabase.GetEntry(symbol, dataTypes.Select(tuple => tuple.Item1));
 
             var exchangeHours = marketHoursDbEntry.ExchangeHours;
-            if (symbol.ID.SecurityType == SecurityType.Option ||
-                symbol.ID.SecurityType == SecurityType.FutureOption ||
-                symbol.ID.SecurityType == SecurityType.Future)
+            if (symbol.ID.SecurityType.IsOption() ||
+                symbol.ID.SecurityType == SecurityType.Future ||
+                symbol.ID.SecurityType == SecurityType.Index)
             {
                 dataNormalizationMode = DataNormalizationMode.Raw;
             }
@@ -503,7 +491,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     exchangeHours.TimeZone,
                     fillForward,
                     extendedMarketHours,
-                    isInternalFeed,
+                    // if the subscription data types were not provided and the tick type is OpenInterest we make it internal
+                    subscriptionDataTypes == null && tickType == TickType.OpenInterest || isInternalFeed,
                     isCustomData,
                     isFilteredSubscription: isFilteredSubscription,
                     tickType: tickType,

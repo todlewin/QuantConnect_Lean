@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -177,7 +177,7 @@ namespace QuantConnect.Tests.Indicators
                     instantiatedIndicator = Activator.CreateInstance(indicator, new object[] {10});
                     counter++;
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     // Some indicators will fail because they don't have a single-parameter constructor.
                     continue;
@@ -256,7 +256,7 @@ namespace QuantConnect.Tests.Indicators
         {
             var methodName = "op_" + @operator;
             var method =
-                typeof (IndicatorBase<IndicatorDataPoint>).GetMethods(BindingFlags.Static | BindingFlags.Public)
+                typeof (IndicatorBase).GetMethods(BindingFlags.Static | BindingFlags.Public)
                 .SingleOrDefault(x => x.Name == methodName && x.GetParameters()[argIndex].ParameterType == typeof(T));
 
             if (method == null)

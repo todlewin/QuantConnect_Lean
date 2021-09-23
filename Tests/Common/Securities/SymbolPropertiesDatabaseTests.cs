@@ -93,7 +93,7 @@ namespace QuantConnect.Tests.Common.Securities
 
         [TestCase(Market.FXCM, SecurityType.Cfd)]
         [TestCase(Market.Oanda, SecurityType.Cfd)]
-        [TestCase(Market.CBOE, SecurityType.Future)]
+        [TestCase(Market.CFE, SecurityType.Future)]
         [TestCase(Market.CBOT, SecurityType.Future)]
         [TestCase(Market.CME, SecurityType.Future)]
         [TestCase(Market.COMEX, SecurityType.Future)]
@@ -394,6 +394,39 @@ namespace QuantConnect.Tests.Common.Securities
 
             Assert.AreEqual((decimal)expectedMultiplier, results.ContractMultiplier);
             Assert.AreEqual((decimal)expectedMinimumPriceFluctuation, results.MinimumPriceVariation);
+        }
+
+        [TestCase("index")]
+        [TestCase("indexoption")]
+        [TestCase("bond")]
+        [TestCase("swap")]
+        public void HandlesUnknownSecurityType(string securityType)
+        {
+            var line = string.Join(",",
+                "usa",
+                "ABCXYZ",
+                securityType,
+                "Example Asset",
+                "USD",
+                "100",
+                "0.01",
+                "1");
+
+            SecurityDatabaseKey key;
+            Assert.DoesNotThrow(() => TestingSymbolPropertiesDatabase.TestFromCsvLine(line, out key));
+        }
+
+        private class TestingSymbolPropertiesDatabase : SymbolPropertiesDatabase
+        {
+            public TestingSymbolPropertiesDatabase(string file)
+                : base(file)
+            {
+            }
+
+            public static SymbolProperties TestFromCsvLine(string line, out SecurityDatabaseKey key)
+            {
+                return FromCsvLine(line, out key);
+            }
         }
     }
 }

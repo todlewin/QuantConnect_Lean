@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -47,12 +47,6 @@ namespace QuantConnect.Lean.Launcher
 
         static void Main(string[] args)
         {
-            //Initialize:
-            var mode = "RELEASE";
-            #if DEBUG
-                mode = "DEBUG";
-            #endif
-
             if (OS.IsWindows)
             {
                 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -64,35 +58,18 @@ namespace QuantConnect.Lean.Launcher
                 Config.MergeCommandLineArgumentsWithConfiguration(LeanArgumentParser.ParseArguments(args));
             }
 
-            var environment = Config.Get("environment");
             var liveMode = Config.GetBool("live-mode");
-            Log.DebuggingEnabled = Config.GetBool("debug-mode");
-            Log.FilePath = Path.Combine(Config.Get("results-destination-folder"), "log.txt");
-            Log.LogHandler = Composer.Instance.GetExportedValueByTypeName<ILogHandler>(Config.Get("log-handler", "CompositeLogHandler"));
-
             //Name thread for the profiler:
             Thread.CurrentThread.Name = "Algorithm Analysis Thread";
-            Log.Trace("Engine.Main(): LEAN ALGORITHMIC TRADING ENGINE v" + Globals.Version + " Mode: " + mode + " (" + (Environment.Is64BitProcess ? "64" : "32") + "bit)");
-            Log.Trace("Engine.Main(): Started " + DateTime.Now.ToShortTimeString());
 
-            //Import external libraries specific to physical server location (cloud/local)
-            
-            try
-            {
-                leanEngineSystemHandlers = LeanEngineSystemHandlers.FromConfiguration(Composer.Instance);
-            }
-            catch (CompositionException compositionException)
-            {
-                Log.Error("Engine.Main(): Failed to load library: " + compositionException);
-                throw;
-            }
-
-            //Setup packeting, queue and controls system: These don't do much locally.
-            leanEngineSystemHandlers.Initialize();
+            Initializer.Start();
+            leanEngineSystemHandlers = Initializer.GetSystemHandlers();
 
             //-> Pull job from QuantConnect job queue, or, pull local build:
             string assemblyPath;
             job = leanEngineSystemHandlers.JobQueue.NextJob(out assemblyPath);
+
+            leanEngineAlgorithmHandlers = Initializer.GetAlgorithmHandlers();
 
             if (job == null)
             {
@@ -101,19 +78,9 @@ namespace QuantConnect.Lean.Launcher
                 throw new ArgumentException(jobNullMessage);
             }
 
-            try
-            {
-                leanEngineAlgorithmHandlers = LeanEngineAlgorithmHandlers.FromConfiguration(Composer.Instance);
-            }
-            catch (CompositionException compositionException)
-            {
-                Log.Error("Engine.Main(): Failed to load library: " + compositionException);
-                throw;
-            }
-
             // if the job version doesn't match this instance version then we can't process it
             // we also don't want to reprocess redelivered jobs
-            if (VersionHelper.IsNotEqualVersion(job.Version) || job.Redelivered)
+            if (job.Redelivered)
             {
                 Log.Error("Engine.Run(): Job Version: " + job.Version + "  Deployed Version: " + Globals.Version + " Redelivered: " + job.Redelivered);
                 //Tiny chance there was an uncontrolled collapse of a server, resulting in an old user task circulating.
@@ -166,6 +133,7 @@ namespace QuantConnect.Lean.Launcher
             leanEngineSystemHandlers.DisposeSafely();
             leanEngineAlgorithmHandlers.DisposeSafely();
             Log.LogHandler.DisposeSafely();
+            OS.CpuPerformanceCounter.DisposeSafely();
 
             Log.Trace("Program.Main(): Exiting Lean...");
             Environment.Exit(exitCode);

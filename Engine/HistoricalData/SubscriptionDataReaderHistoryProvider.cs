@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -38,12 +38,17 @@ namespace QuantConnect.Lean.Engine.HistoricalData
     /// </summary>
     public class SubscriptionDataReaderHistoryProvider : SynchronizingHistoryProvider
     {
+        private IDataProvider _dataProvider;
         private IMapFileProvider _mapFileProvider;
         private IFactorFileProvider _factorFileProvider;
         private IDataCacheProvider _dataCacheProvider;
-        private IDataPermissionManager _dataPermissionManager;
         private bool _parallelHistoryRequestsEnabled;
         private bool _initialized;
+
+        /// <summary>
+        /// Manager used to allow or deny access to a requested datasource for specific users
+        /// </summary>
+        protected IDataPermissionManager DataPermissionManager;
 
         /// <summary>
         /// Initializes this history provider to work for the specified job
@@ -57,10 +62,11 @@ namespace QuantConnect.Lean.Engine.HistoricalData
                 throw new InvalidOperationException("SubscriptionDataReaderHistoryProvider can only be initialized once");
             }
             _initialized = true;
+            _dataProvider = parameters.DataProvider;
             _mapFileProvider = parameters.MapFileProvider;
             _dataCacheProvider = parameters.DataCacheProvider;
             _factorFileProvider = parameters.FactorFileProvider;
-            _dataPermissionManager = parameters.DataPermissionManager;
+            DataPermissionManager = parameters.DataPermissionManager;
             _parallelHistoryRequestsEnabled = parameters.ParallelHistoryRequestsEnabled;
         }
 
@@ -92,21 +98,8 @@ namespace QuantConnect.Lean.Engine.HistoricalData
             var startTimeLocal = startUtc.ConvertFromUtc(request.ExchangeHours.TimeZone);
             var endTimeLocal = endUtc.ConvertFromUtc(request.ExchangeHours.TimeZone);
 
-            var config = new SubscriptionDataConfig(request.DataType,
-                request.Symbol,
-                request.Resolution,
-                request.DataTimeZone,
-                request.ExchangeHours.TimeZone,
-                request.FillForwardResolution.HasValue,
-                request.IncludeExtendedMarketHours,
-                false,
-                request.IsCustomData,
-                request.TickType,
-                true,
-                request.DataNormalizationMode
-                );
-
-            _dataPermissionManager.AssertConfiguration(config);
+            var config = request.ToSubscriptionDataConfig();
+            DataPermissionManager.AssertConfiguration(config, startTimeLocal, endTimeLocal);
 
             var security = new Security(
                 request.ExchangeHours,
@@ -136,7 +129,8 @@ namespace QuantConnect.Lean.Engine.HistoricalData
                 _factorFileProvider,
                 tradableDates,
                 false,
-                _dataCacheProvider
+                _dataCacheProvider,
+                _dataProvider
                 );
 
             dataReader.InvalidConfigurationDetected += (sender, args) => { OnInvalidConfigurationDetected(args); };
@@ -159,7 +153,6 @@ namespace QuantConnect.Lean.Engine.HistoricalData
                 _factorFileProvider,
                 dataReader,
                 mapFileResolver,
-                false,
                 startTimeLocal);
 
             // optionally apply fill forward behavior
@@ -180,18 +173,19 @@ namespace QuantConnect.Lean.Engine.HistoricalData
             // so to combat this we deliberately filter the results from the data reader to fix these cases
             // which only apply to non-tick data
 
-            reader = new SubscriptionFilterEnumerator(reader, security, endTimeLocal, config.ExtendedMarketHours, false);
+            reader = new SubscriptionFilterEnumerator(reader, security, endTimeLocal, config.ExtendedMarketHours, false, request.ExchangeHours);
             reader = new FilterEnumerator<BaseData>(reader, data =>
             {
                 // allow all ticks
                 if (config.Resolution == Resolution.Tick) return true;
+                // filter out all aux data
+                if (data.DataType == MarketDataType.Auxiliary) return false;
                 // filter out future data
                 if (data.EndTime > endTimeLocal) return false;
                 // filter out data before the start
                 return data.EndTime > startTimeLocal;
             });
             var subscriptionRequest = new SubscriptionRequest(false, null, security, config, request.StartTimeUtc, request.EndTimeUtc);
-
             if (_parallelHistoryRequestsEnabled)
             {
                 return SubscriptionUtils.CreateAndScheduleWorker(subscriptionRequest, reader, _factorFileProvider, false);
