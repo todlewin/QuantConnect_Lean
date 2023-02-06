@@ -429,7 +429,7 @@ namespace QuantConnect.Tests.Common
 
             Assert.AreEqual(canonicalFutureOption.Underlying.ID.Symbol, futureTicker);
             Assert.AreEqual(canonicalFutureOption.ID.Symbol, expectedFutureOptionTicker);
-            Assert.IsTrue(canonicalFutureOption.Value.StartsWith("?" + futureTicker));
+            Assert.IsTrue(canonicalFutureOption.Value.StartsWith("?" + expectedFutureOptionTicker));
 
             Assert.AreEqual(nonCanonicalFutureOption.Underlying.ID.Symbol, futureTicker);
             Assert.AreEqual(nonCanonicalFutureOption.ID.Symbol, expectedFutureOptionTicker);
@@ -523,7 +523,7 @@ namespace QuantConnect.Tests.Common
             do
             {
                 Console.WriteLine(symbolChain.ToString() + "; Value: " + symbolChain.Value);
-                if (symbolChain.SecurityType == SecurityType.Base || symbolChain.SecurityType.RequiresMapping())
+                if (symbolChain.SecurityType == SecurityType.Base || symbolChain.RequiresMapping())
                 {
                     Assert.AreEqual(mappedTicker, symbolChain.Value);
                 }

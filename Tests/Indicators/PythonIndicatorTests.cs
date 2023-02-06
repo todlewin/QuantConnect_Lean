@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -31,11 +31,11 @@ namespace QuantConnect.Tests.Indicators
     [TestFixture]
     public class PythonIndicatorTests : CommonIndicatorTests<IBaseData>
     {
-        protected override IndicatorBase<IBaseData> CreateIndicator()
+        private static PyObject CreatePythonIndicator(int period = 14)
         {
             using (Py.GIL())
             {
-                var module = PythonEngine.ModuleFromString(
+                var module = PyModule.FromString(
                     Guid.NewGuid().ToString(),
                     @"
 from AlgorithmImports import *
@@ -45,6 +45,8 @@ class CustomSimpleMovingAverage(PythonIndicator):
     def __init__(self, name, period):
         self.Name = name
         self.Value = 0
+        self.Period = period
+        self.WarmUpPeriod = period
         self.queue = deque(maxlen=period)
 
     # Update method is mandatory
@@ -56,10 +58,15 @@ class CustomSimpleMovingAverage(PythonIndicator):
 "
                 );
                 var indicator = module.GetAttr("CustomSimpleMovingAverage")
-                    .Invoke("custom".ToPython(), 14.ToPython());
+                    .Invoke("custom".ToPython(), period.ToPython());
 
-                return new PythonIndicator(indicator);
+                return indicator;
             }
+        }
+
+        protected override IndicatorBase<IBaseData> CreateIndicator()
+        {
+            return new PythonIndicator(CreatePythonIndicator());
         }
 
         protected override string TestFileName => "spy_with_indicators.txt";
@@ -154,7 +161,7 @@ class CustomSimpleMovingAverage(PythonIndicator):
                 sma.Update(data);
             }
             Assert.IsTrue(sma.IsReady);
-            
+
             sma.Reset();
 
             TestHelper.AssertIndicatorIsInDefaultState(sma);
@@ -172,7 +179,7 @@ class CustomSimpleMovingAverage(PythonIndicator):
 
             using (Py.GIL())
             {
-                var module = PythonEngine.ModuleFromString(
+                var module = PyModule.FromString(
                     Guid.NewGuid().ToString(),
                     @"
 from AlgorithmImports import *
@@ -206,7 +213,7 @@ class BadCustomIndicator(PythonIndicator):
         [Test]
         public void AllPythonRegisterIndicatorCases()
         {
-            //This test covers all three cases of registering a indicator through Python 
+            //This test covers all three cases of registering a indicator through Python
 
             //Setup algorithm and Equity
             var algorithm = new QCAlgorithm();
@@ -216,7 +223,7 @@ class BadCustomIndicator(PythonIndicator):
             //Setup Python Indicator and Consolidator
             using (Py.GIL())
             {
-                var module = PythonEngine.ModuleFromString(Guid.NewGuid().ToString(),
+                var module = PyModule.FromString(Guid.NewGuid().ToString(),
                     "from AlgorithmImports import *\n" +
                     "consolidator = QuoteBarConsolidator(timedelta(days = 5)) \n" +
                     "timeDelta = timedelta(days=2)\n" +
@@ -253,11 +260,11 @@ class BadCustomIndicator(PythonIndicator):
         }
 
         [Test]
-        public void WarmsUpProperly()
+        public void WarmsUpProperlyPythonIndicator()
         {
             using (Py.GIL())
             {
-                var module = PythonEngine.ModuleFromString(
+                var module = PyModule.FromString(
                     Guid.NewGuid().ToString(),
                     @"
 from AlgorithmImports import *
@@ -300,7 +307,7 @@ class CustomSimpleMovingAverage(PythonIndicator):
         {
             using (Py.GIL())
             {
-                var module = PythonEngine.ModuleFromString(
+                var module = PyModule.FromString(
                     Guid.NewGuid().ToString(),
                     @"
 from AlgorithmImports import *
@@ -326,6 +333,90 @@ class CustomSimpleMovingAverage(PythonIndicator):
 
                 Assert.AreEqual(0, indicator.WarmUpPeriod);
             }
+        }
+
+        [Test]
+        public void PythonIndicatorDoesntRequireWrappingToWork()
+        {
+            var data = new[] { 1m, 10m, 100m, 1000m, 10000m, 1234m, 56789m, 2468m, 13579m };
+            var seen = new List<decimal>();
+            var start = new DateTime(2022, 11, 15);
+            var period = 4;
+
+            using (Py.GIL())
+            {
+                using dynamic customSma = CreatePythonIndicator(period);
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    var datum = data[i];
+                    seen.Add(datum);
+
+                    customSma.Update(new IndicatorDataPoint(start.AddSeconds(i), datum));
+
+                    Assert.AreEqual(Enumerable.Reverse(seen).Take(period).Average(), (decimal)customSma.Value);
+                }
+            }
+        }
+
+        [Test]
+        public void IndicatorExtensionsWorkForPythonIndicators()
+        {
+            var data = new[] { 1m, 10m, 100m, 1000m, 10000m, 1234m, 56789m, 2468m, 13579m };
+            var seen = new List<decimal>();
+            var start = new DateTime(2022, 11, 15);
+
+            var period = 4;
+            var sma = new SimpleMovingAverage(period);
+
+            using (Py.GIL())
+            {
+                using dynamic customSma = CreatePythonIndicator(period);
+                IndicatorExtensions.Of(customSma, sma.ToPython());
+
+                for (int i = 0; i < data.Length; i++)
+                {
+                    var datum = data[i];
+
+                    sma.Update(new IndicatorDataPoint(start.AddSeconds(i), datum));
+
+                    if (i < 2 * period - 2)
+                    {
+                        Assert.IsFalse((bool)customSma.IsReady);
+                    }
+                    else
+                    {
+                        Assert.IsTrue((bool)customSma.IsReady);
+                    }
+
+                    if (i < period - 1)
+                    {
+                        Assert.AreEqual(0m, (decimal)customSma.Value);
+                    }
+                    else
+                    {
+                        seen.Add(sma.Current.Value);
+                        var value = (decimal)customSma.Value;
+                        Assert.AreEqual(Enumerable.Reverse(seen).Take(period).Average(), (decimal)customSma.Value);
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void PythonIndicatorExtensionInRegressionAlgorithm()
+        {
+            var parameter = new RegressionTests.AlgorithmStatisticsTestParameters(
+                "CustomIndicatorWithExtensionAlgorithm",
+                new (),
+                Language.Python,
+                AlgorithmStatus.Completed);
+
+            AlgorithmRunner.RunLocalBacktest(parameter.Algorithm,
+                parameter.Statistics,
+                parameter.AlphaStatistics,
+                parameter.Language,
+                parameter.ExpectedFinalStatus);
         }
     }
 }

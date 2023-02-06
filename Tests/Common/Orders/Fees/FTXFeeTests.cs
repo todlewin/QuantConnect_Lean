@@ -29,16 +29,22 @@ namespace QuantConnect.Tests.Common.Orders.Fees
     {
         private Crypto _xrpusdt;
         private Crypto _ethusd;
-        private readonly IFeeModel _feeModel = new FTXFeeModel();
+        private IFeeModel _feeModel;
+
+        protected decimal TakerFee;
+        protected decimal MakerFee;
 
         [SetUp]
         public void Initialize()
         {
+            _feeModel = GetFeeModel();
+            SetBrokerageFees();
             var spdb = SymbolPropertiesDatabase.FromDataFolder();
             var tz = TimeZones.Utc;
             _xrpusdt = new Crypto(
                 SecurityExchangeHours.AlwaysOpen(tz),
                 new Cash("USDT", 0, 1),
+                new Cash("XRP", 0, 0),
                 new SubscriptionDataConfig(typeof(TradeBar), Symbol.Create("XRPUSDT", SecurityType.Crypto, Market.FTX), Resolution.Minute, tz, tz, true, false, false),
                 spdb.GetSymbolProperties(Market.FTX, Symbol.Create("XRPUSDT", SecurityType.Crypto, Market.FTX), SecurityType.Crypto, "USDT"),
                 ErrorCurrencyConverter.Instance,
@@ -49,12 +55,19 @@ namespace QuantConnect.Tests.Common.Orders.Fees
             _ethusd = new Crypto(
                 SecurityExchangeHours.AlwaysOpen(tz),
                 new Cash(Currencies.USD, 0, 10),
+                new Cash("ETH", 0, 0),
                 new SubscriptionDataConfig(typeof(TradeBar), Symbol.Create("ETHUSD", SecurityType.Crypto, Market.FTX), Resolution.Minute, tz, tz, true, false, false),
                 spdb.GetSymbolProperties(Market.FTX, Symbol.Create("ETHUSD", SecurityType.Crypto, Market.FTX), SecurityType.Crypto, Currencies.USD),
                 ErrorCurrencyConverter.Instance,
                 RegisteredSecurityDataTypesProvider.Null
             );
             _ethusd.SetMarketPrice(new Tick(DateTime.UtcNow, _ethusd.Symbol, 100, 100));
+        }
+
+        protected virtual void SetBrokerageFees()
+        {
+            MakerFee = 0.02m;
+            TakerFee = 0.07m;
         }
 
         [TestCase(-1)]
@@ -116,7 +129,7 @@ namespace QuantConnect.Tests.Common.Orders.Fees
 
             Assert.AreEqual(_ethusd.QuoteCurrency.Symbol, fee.Value.Currency);
             // 100 (price) * 0.0007 (taker fee, in quote currency)
-            Assert.AreEqual(0.07m, fee.Value.Amount);
+            Assert.AreEqual(TakerFee, fee.Value.Amount);
         }
 
         [Test]
@@ -154,7 +167,7 @@ namespace QuantConnect.Tests.Common.Orders.Fees
 
             Assert.AreEqual(_ethusd.QuoteCurrency.Symbol, fee.Value.Currency);
             // 0.0002 (maker fee, in quote currency)
-            Assert.AreEqual(0.02, fee.Value.Amount);
+            Assert.AreEqual(MakerFee, fee.Value.Amount);
         }
 
         [Test]
@@ -190,9 +203,9 @@ namespace QuantConnect.Tests.Common.Orders.Fees
                 )
             );
 
-            Assert.AreEqual(_ethusd.BaseCurrencySymbol, fee.Value.Currency);
+            Assert.AreEqual(_ethusd.BaseCurrency.Symbol, fee.Value.Currency);
             // 0.0002 (maker fee, in base currency)
-            Assert.AreEqual(0.0002, fee.Value.Amount);
+            Assert.AreEqual(MakerFee / 100, fee.Value.Amount);
         }
 
         [Test]
@@ -207,7 +220,9 @@ namespace QuantConnect.Tests.Common.Orders.Fees
 
             Assert.AreEqual("USDT", fee.Value.Currency);
             // 100 (price) * 0.0007 (taker fee)
-            Assert.AreEqual(0.07m, fee.Value.Amount);
+            Assert.AreEqual(TakerFee, fee.Value.Amount);
         }
+
+        protected virtual FTXFeeModel GetFeeModel() => new();
     }
 }

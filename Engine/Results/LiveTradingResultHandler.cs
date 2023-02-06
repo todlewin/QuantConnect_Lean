@@ -57,7 +57,7 @@ namespace QuantConnect.Lean.Engine.Results
         private DateTime _currentUtcDate;
 
         /// <summary>
-        /// The earliest time of next dump to the status file 
+        /// The earliest time of next dump to the status file
         /// </summary>
         protected DateTime NextStatusUpdate;
 
@@ -117,7 +117,7 @@ namespace QuantConnect.Lean.Engine.Results
             ExitEvent.WaitOne(3000);
 
             // -> 1. Run Primary Sender Loop: Continually process messages from queue as soon as they arrive.
-            while (!(ExitTriggered && Messages.Count == 0))
+            while (!(ExitTriggered && Messages.IsEmpty))
             {
                 try
                 {
@@ -131,10 +131,10 @@ namespace QuantConnect.Lean.Engine.Results
                     //2. Update the packet scanner:
                     Update();
 
-                    if (Messages.Count == 0)
+                    if (Messages.IsEmpty)
                     {
                         // prevent thread lock/tight loop when there's no work to be done
-                        ExitEvent.WaitOne(100);
+                        ExitEvent.WaitOne(Time.GetSecondUnevenWait(1000));
                     }
                 }
                 catch (Exception err)
@@ -206,24 +206,16 @@ namespace QuantConnect.Lean.Engine.Results
 
                     //Profit loss changes, get the banner statistics, summary information on the performance for the headers.
                     var deltaStatistics = new Dictionary<string, string>();
-                    var runtimeStatistics = new Dictionary<string, string>();
                     var serverStatistics = GetServerStatistics(utcNow);
-                    var holdings = GetHoldings();
+                    var holdings = GetHoldings(Algorithm.Securities.Values, Algorithm.SubscriptionManager.SubscriptionDataConfigService);
 
                     //Add the algorithm statistics first.
                     Log.Debug("LiveTradingResultHandler.Update(): Build run time stats");
-                    lock (RuntimeStatistics)
-                    {
-                        foreach (var pair in RuntimeStatistics)
-                        {
-                            runtimeStatistics.Add(pair.Key, pair.Value);
-                        }
-                    }
+
+                    var summary = GenerateStatisticsResults(performanceCharts).Summary;
+                    var runtimeStatistics = GetAlgorithmRuntimeStatistics(summary);
                     Log.Debug("LiveTradingResultHandler.Update(): End build run time stats");
 
-                    //Add other fixed parameters.
-                    var summary = GenerateStatisticsResults(performanceCharts).Summary;
-                    GetAlgorithmRuntimeStatistics(summary, runtimeStatistics);
 
                     // since we're sending multiple packets, let's do it async and forget about it
                     // chart data can get big so let's break them up into groups
@@ -252,7 +244,7 @@ namespace QuantConnect.Lean.Engine.Results
                         var orderEvents = GetOrderEventsToStore();
 
                         var orders = new Dictionary<int, Order>(TransactionHandler.Orders);
-                        var complete = new LiveResultPacket(_job, new LiveResult(new LiveResultParameters(chartComplete, orders, Algorithm.Transactions.TransactionRecord, holdings, Algorithm.Portfolio.CashBook, deltaStatistics, runtimeStatistics, orderEvents, serverStatistics)));
+                        var complete = new LiveResultPacket(_job, new LiveResult(new LiveResultParameters(chartComplete, orders, Algorithm.Transactions.TransactionRecord, holdings, Algorithm.Portfolio.CashBook, deltaStatistics, runtimeStatistics, orderEvents, serverStatistics, state: GetAlgorithmState())));
                         StoreResult(complete);
                         _nextChartsUpdate = DateTime.UtcNow.Add(ChartUpdateInterval);
                         Log.Debug("LiveTradingResultHandler.Update(): End-store result");
@@ -284,7 +276,7 @@ namespace QuantConnect.Lean.Engine.Results
                                 _job.AlgorithmId,
                                 Algorithm.Portfolio.TotalUnrealizedProfit,
                                 Algorithm.Portfolio.TotalFees,
-                                Algorithm.Portfolio.TotalProfit,
+                                Algorithm.Portfolio.TotalNetProfit,
                                 Algorithm.Portfolio.TotalHoldingsValue,
                                 Algorithm.Portfolio.TotalPortfolioValue,
                                 GetNetReturn(),
@@ -403,7 +395,7 @@ namespace QuantConnect.Lean.Engine.Results
         /// </summary>
         /// <remarks>Will sample charts every 12 hours, 2 data points per day at maximum,
         /// to reduce file size</remarks>
-        private void StoreStatusFile(Dictionary<string, string> runtimeStatistics,
+        private void StoreStatusFile(SortedDictionary<string, string> runtimeStatistics,
             Dictionary<string, Holding> holdings,
             Dictionary<string, Chart> chartComplete,
             SortedDictionary<DateTime, decimal> profitLoss,
@@ -451,7 +443,7 @@ namespace QuantConnect.Lean.Engine.Results
             Dictionary<string, Holding> holdings,
             CashBook cashbook,
             Dictionary<string, string> deltaStatistics,
-            Dictionary<string, string> runtimeStatistics,
+            SortedDictionary<string, string> runtimeStatistics,
             Dictionary<string, string> serverStatistics,
             List<OrderEvent> deltaOrderEvents)
         {
@@ -595,6 +587,7 @@ namespace QuantConnect.Lean.Engine.Results
         {
             Messages.Enqueue(new RuntimeErrorPacket(_job.UserId, AlgorithmId, message, stacktrace));
             AddToLogStore(message + (!string.IsNullOrEmpty(stacktrace) ? ": StackTrace: " + stacktrace : string.Empty));
+            SetAlgorithmState(message, stacktrace);
         }
 
         /// <summary>
@@ -801,7 +794,7 @@ namespace QuantConnect.Lean.Engine.Results
 
                     var orders = new Dictionary<int, Order>(TransactionHandler.Orders);
                     var profitLoss = new SortedDictionary<DateTime, decimal>(Algorithm.Transactions.TransactionRecord);
-                    var holdings = GetHoldings(onlyInvested: true);
+                    var holdings = GetHoldings(Algorithm.Securities.Values, Algorithm.SubscriptionManager.SubscriptionDataConfigService, onlyInvested: true);
                     var statisticsResults = GenerateStatisticsResults(charts, profitLoss);
                     var runtime = GetAlgorithmRuntimeStatistics(statisticsResults.Summary);
 
@@ -809,11 +802,14 @@ namespace QuantConnect.Lean.Engine.Results
 
                     //Create a packet:
                     result = new LiveResultPacket(_job,
-                        new LiveResult(new LiveResultParameters(charts, orders, profitLoss, new Dictionary<string, Holding>(), Algorithm.Portfolio.CashBook, statisticsResults.Summary, runtime, GetOrderEventsToStore())));
+                        new LiveResult(new LiveResultParameters(charts, orders, profitLoss, new Dictionary<string, Holding>(),
+                            Algorithm.Portfolio.CashBook, statisticsResults.Summary, runtime, GetOrderEventsToStore(),
+                            algorithmConfiguration: AlgorithmConfiguration.Create(Algorithm), state: GetAlgorithmState(DateTime.UtcNow.ToStringInvariant()))));
                 }
                 else
                 {
                     result = LiveResultPacket.CreateEmpty(_job);
+                    result.Results.State = GetAlgorithmState(DateTime.UtcNow.ToStringInvariant());
                 }
                 result.ProcessingTime = (DateTime.UtcNow - StartTime).TotalSeconds;
 
@@ -988,6 +984,8 @@ namespace QuantConnect.Lean.Engine.Results
                 SendFinalResult();
 
                 base.Exit();
+
+                _cancellationTokenSource.DisposeSafely();
             }
         }
 
@@ -1076,8 +1074,8 @@ namespace QuantConnect.Lean.Engine.Results
             }
 
             //Send all the notification messages but timeout within a second, or if this is a force process, wait till its done.
-            var start = DateTime.UtcNow;
-            while (Algorithm.Notify.Messages.Count > 0 && (DateTime.UtcNow < start.AddSeconds(1) || forceProcess))
+            var timeout = DateTime.UtcNow.AddSeconds(1);
+            while (!Algorithm.Notify.Messages.IsEmpty && (DateTime.UtcNow < timeout || forceProcess))
             {
                 Notification message;
                 if (Algorithm.Notify.Messages.TryDequeue(out message))
@@ -1250,16 +1248,21 @@ namespace QuantConnect.Lean.Engine.Results
             }
         }
 
-        private Dictionary<string, Holding> GetHoldings(bool onlyInvested = false)
+        /// <summary>
+        /// Helper method to fetch the algorithm holdings
+        /// </summary>
+        public static Dictionary<string, Holding> GetHoldings(IEnumerable<Security> securities, ISubscriptionDataConfigService subscriptionDataConfigService, bool onlyInvested = false)
         {
             var holdings = new Dictionary<string, Holding>();
 
-            foreach (var kvp in Algorithm.Securities
-                // we send non internal, non canonical and tradable securities. When securities are removed they are marked as non tradable
-                .Where(pair => pair.Value.IsTradable && !pair.Value.IsInternalFeed() && !pair.Key.IsCanonical() && (!onlyInvested || pair.Value.Invested))
-                .OrderBy(x => x.Key.Value))
+            foreach (var security in securities
+                // If we are invested we send it always, if not, we send non internal, non canonical and tradable securities. When securities are removed they are marked as non tradable.
+                .Where(s => s.Invested || !onlyInvested && (!s.IsInternalFeed() && s.IsTradable && !s.Symbol.IsCanonical()
+                    // Continuous futures are different because it's mapped securities are internal and the continuous contract is canonical and non tradable but we want to send them anyways
+                    // but we don't want to sent non canonical, non tradable futures, these would be the future chain assets, or continuous mapped contracts that have been removed
+                    || s.Symbol.SecurityType == QuantConnect.SecurityType.Future && (s.IsTradable || s.Symbol.IsCanonical() && subscriptionDataConfigService.GetSubscriptionDataConfigs(s.Symbol).Any())))
+                .OrderBy(x => x.Symbol.Value))
             {
-                var security = kvp.Value;
                 DictionarySafeAdd(holdings, security.Symbol.Value, new Holding(security), "holdings");
             }
 

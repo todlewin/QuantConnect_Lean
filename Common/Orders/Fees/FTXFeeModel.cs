@@ -14,7 +14,6 @@
 */
 
 using QuantConnect.Securities;
-using QuantConnect.Securities.Crypto;
 
 namespace QuantConnect.Orders.Fees
 {
@@ -27,11 +26,12 @@ namespace QuantConnect.Orders.Fees
         /// <summary>
         /// Tier 1 maker fees
         /// </summary>
-        public const decimal MakerFee = 0.0002m;
+        public virtual decimal MakerFee => 0.0002m;
+        
         /// <summary>
         /// Tier 1 taker fees
         /// </summary>
-        public const decimal TakerFee = 0.0007m;
+        public virtual decimal TakerFee => 0.0007m;
 
         /// <summary>
         /// Get the fee for this order in quote currency
@@ -58,7 +58,7 @@ namespace QuantConnect.Orders.Fees
                 if (order.Direction == OrderDirection.Buy)
                 {
                     unitPrice = 1;
-                    currency = ((IBaseCurrencySymbol)security).BaseCurrencySymbol;
+                    currency = ((IBaseCurrencySymbol)security).BaseCurrency.Symbol;
                 }
             }
 

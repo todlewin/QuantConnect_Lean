@@ -13,16 +13,13 @@
  * limitations under the License.
 */
 
+using QuantConnect.Data;
+using QuantConnect.Interfaces;
+using QuantConnect.Securities;
+using QuantConnect.Securities.Option;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using QuantConnect.Data;
-using QuantConnect.Interfaces;
-using QuantConnect.Orders;
-using QuantConnect.Securities;
-using QuantConnect.Securities.Option;
-using QuantConnect.Securities.Volatility;
 
 namespace QuantConnect.Algorithm.CSharp
 {
@@ -90,6 +87,7 @@ namespace QuantConnect.Algorithm.CSharp
             var lambda = data.OptionChains.Values.OrderByDescending(y => y.Contracts.Values.Sum(x => x.Volume)).First().Contracts.Values.Select(x => x.Greeks.Lambda).ToList();
             var rho = data.OptionChains.Values.OrderByDescending(y => y.Contracts.Values.Sum(x => x.Volume)).First().Contracts.Values.Select(x => x.Greeks.Rho).ToList();
             var theta = data.OptionChains.Values.OrderByDescending(y => y.Contracts.Values.Sum(x => x.Volume)).First().Contracts.Values.Select(x => x.Greeks.Theta).ToList();
+            var impliedVol = data.OptionChains.Values.OrderByDescending(y => y.Contracts.Values.Sum(x => x.Volume)).First().Contracts.Values.Select(x => x.ImpliedVolatility).ToList();
             var vega = data.OptionChains.Values.OrderByDescending(y => y.Contracts.Values.Sum(x => x.Volume)).First().Contracts.Values.Select(x => x.Greeks.Vega).ToList();
 
             // The commented out test cases all return zero.
@@ -116,9 +114,8 @@ namespace QuantConnect.Algorithm.CSharp
             {
                 throw new AggregateException("Option contract Theta was equal to zero");
             }
-            // The strike is far away from the underlying asset's price, and we're very close to expiry.
-            // Zero is an expected value here.
-            if (vega.Any(v => v != 0))
+            // Vega will equal 0 if the quote price and IV are way too off, causing the price is not sensitive to volatility change
+            if (vega.Zip(impliedVol, (v, iv) => (v, iv)).Any(x => x.v == 0 && x.iv < 10))
             {
                 throw new AggregateException("Option contract Vega was equal to zero");
             }
@@ -157,6 +154,16 @@ namespace QuantConnect.Algorithm.CSharp
         public Language[] Languages { get; } = { Language.CSharp, Language.Python };
 
         /// <summary>
+        /// Data Points count of all timeslices of algorithm
+        /// </summary>
+        public long DataPoints => 20443;
+
+        /// <summary>
+        /// Data Points count of the algorithm history
+        /// </summary>
+        public int AlgorithmHistoryDataPoints => 0;
+
+        /// <summary>
         /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
         /// </summary>
         public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
@@ -173,13 +180,13 @@ namespace QuantConnect.Algorithm.CSharp
             {"Loss Rate", "100%"},
             {"Win Rate", "0%"},
             {"Profit-Loss Ratio", "0"},
-            {"Alpha", "2.168"},
-            {"Beta", "-0.226"},
+            {"Alpha", "2.169"},
+            {"Beta", "-0.238"},
             {"Annual Standard Deviation", "0.373"},
             {"Annual Variance", "0.139"},
-            {"Information Ratio", "5.177"},
-            {"Tracking Error", "0.408"},
-            {"Treynor Ratio", "-9.544"},
+            {"Information Ratio", "5.17"},
+            {"Tracking Error", "0.409"},
+            {"Treynor Ratio", "-9.071"},
             {"Total Fees", "$0.00"},
             {"Estimated Strategy Capacity", "$44000000.00"},
             {"Lowest Capacity Asset", "SPX XL80P3GHDZXQ|SPX 31"},
@@ -202,7 +209,7 @@ namespace QuantConnect.Algorithm.CSharp
             {"Mean Population Magnitude", "0%"},
             {"Rolling Averaged Population Direction", "0%"},
             {"Rolling Averaged Population Magnitude", "0%"},
-            {"OrderListHash", "3cccf8c2409ee8a9020ba79a6c45742a"}
+            {"OrderListHash", "8176c783493b007093baaa1a43acfe4b"}
         };
     }
 }

@@ -24,7 +24,7 @@ using QuantConnect.Interfaces;
 namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
-    /// In this algortihm we show how you can easily use the universe selection feature to fetch symbols
+    /// In this algorithm we show how you can easily use the universe selection feature to fetch symbols
     /// to be traded using the AddUniverse method. This method accepts a function that will return the
     /// desired current set of symbols. Return Universe.Unchanged if no universe changes should be made
     /// </summary>
@@ -155,6 +155,16 @@ namespace QuantConnect.Algorithm.CSharp
         /// This is used by the regression test system to indicate which languages this algorithm is written in.
         /// </summary>
         public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// Data Points count of all timeslices of algorithm
+        /// </summary>
+        public long DataPoints => 5291;
+
+        /// <summary>
+        /// Data Points count of the algorithm history
+        /// </summary>
+        public int AlgorithmHistoryDataPoints => 0;
 
         /// <summary>
         /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm

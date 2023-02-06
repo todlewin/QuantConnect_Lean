@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,10 +14,10 @@
 */
 
 using System;
-using System.Collections.Generic;
 using Newtonsoft.Json;
 using QuantConnect.Orders;
 using QuantConnect.Packets;
+using System.Collections.Generic;
 
 namespace QuantConnect
 {
@@ -72,9 +72,21 @@ namespace QuantConnect
         public IDictionary<string, string> RuntimeStatistics;
 
         /// <summary>
+        /// State of the result packet.
+        /// </summary>
+        [JsonProperty(PropertyName = "State", NullValueHandling = NullValueHandling.Ignore)]
+        public IDictionary<string, string> State;
+
+        /// <summary>
         /// Server status information, including CPU/RAM usage, ect...
         /// </summary>
         [JsonProperty(PropertyName = "ServerStatistics", NullValueHandling = NullValueHandling.Ignore)]
         public IDictionary<string, string> ServerStatistics;
+
+        /// <summary>
+        /// The algorithm's configuration required for report generation
+        /// </summary>
+        [JsonProperty(PropertyName = "AlgorithmConfiguration", NullValueHandling = NullValueHandling.Ignore)]
+        public AlgorithmConfiguration AlgorithmConfiguration;
     }
 }

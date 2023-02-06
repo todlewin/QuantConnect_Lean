@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -15,8 +15,8 @@
 */
 
 using System;
-using Newtonsoft.Json;
 using ProtoBuf;
+using Newtonsoft.Json;
 using static QuantConnect.StringExtensions;
 
 namespace QuantConnect
@@ -83,7 +83,7 @@ namespace QuantConnect
                     break;
 
                 case SecurityType.Option:
-                    return CreateOption(ticker, market, default(OptionStyle), default(OptionRight), 0, SecurityIdentifier.DefaultDate);
+                    return CreateOption(ticker, market, default, default, default, SecurityIdentifier.DefaultDate);
 
                 case SecurityType.Future:
                     sid = SecurityIdentifier.GenerateFuture(SecurityIdentifier.DefaultDate, ticker, market);
@@ -93,13 +93,17 @@ namespace QuantConnect
                     sid = SecurityIdentifier.GenerateCrypto(ticker, market);
                     break;
 
+                case SecurityType.CryptoFuture:
+                    sid = SecurityIdentifier.GenerateCryptoFuture(SecurityIdentifier.DefaultDate, ticker, market);
+                    break;
+
                 case SecurityType.IndexOption:
                     return CreateOption(
                         Create(ticker, SecurityType.Index, market),
                         market,
                         OptionStyle.European,
-                        default(OptionRight),
-                        0,
+                        default,
+                        default,
                         SecurityIdentifier.DefaultDate);
 
                 case SecurityType.FutureOption:
@@ -176,10 +180,66 @@ namespace QuantConnect
         /// <returns>A new Symbol object for the specified option contract</returns>
         public static Symbol CreateOption(Symbol underlyingSymbol, string market, OptionStyle style, OptionRight right, decimal strike, DateTime expiry, string alias = null)
         {
-            var sid = SecurityIdentifier.GenerateOption(expiry, underlyingSymbol.ID, market, strike, right, style);
+            return CreateOption(underlyingSymbol, null, market, style, right, strike, expiry, alias);
+        }
+
+        /// <summary>
+        /// Provides a convenience method for creating an option Symbol using SecurityIdentifier.
+        /// </summary>
+        /// <param name="underlyingSymbol">The underlying security symbol</param>
+        /// <param name="targetOption">The target option ticker. This is useful when the option ticker does not match the underlying, e.g. SPX index and the SPXW weekly option. If null is provided will use underlying</param>
+        /// <param name="market">The market the underlying resides in</param>
+        /// <param name="style">The option style (American, European, ect..)</param>
+        /// <param name="right">The option right (Put/Call)</param>
+        /// <param name="strike">The option strike price</param>
+        /// <param name="expiry">The option expiry date</param>
+        /// <param name="alias">An alias to be used for the symbol cache. Required when
+        /// adding the same security from diferent markets</param>
+        /// <returns>A new Symbol object for the specified option contract</returns>
+        public static Symbol CreateOption(Symbol underlyingSymbol, string targetOption, string market, OptionStyle style, OptionRight right, decimal strike, DateTime expiry, string alias = null)
+        {
+            var sid = SecurityIdentifier.GenerateOption(expiry, underlyingSymbol.ID, targetOption, market, strike, right, style);
 
             return new Symbol(sid, alias ?? GetAlias(sid, underlyingSymbol), underlyingSymbol);
         }
+
+        /// <summary>
+        /// Simple method to create the canonical option symbol for any given underlying symbol
+        /// </summary>
+        /// <param name="underlyingSymbol">Underlying of this option</param>
+        /// <param name="market">Market for this option</param>
+        /// <param name="alias">An alias to be used for the symbol cache. Required when
+        /// adding the same security from different markets</param>
+        /// <returns>New Canonical Option</returns>
+        public static Symbol CreateCanonicalOption(Symbol underlyingSymbol, string market = null, string alias = null)
+        {
+            return CreateCanonicalOption(underlyingSymbol, null, market, alias);
+        }
+
+        /// <summary>
+        /// Simple method to create the canonical option symbol for any given underlying symbol
+        /// </summary>
+        /// <param name="underlyingSymbol">Underlying of this option</param>
+        /// <param name="targetOption">The target option ticker. This is useful when the option ticker does not match the underlying, e.g. SPX index and the SPXW weekly option. If null is provided will use underlying</param>
+        /// <param name="market">Market for this option</param>
+        /// <param name="alias">An alias to be used for the symbol cache. Required when
+        /// adding the same security from different markets</param>
+        /// <returns>New Canonical Option</returns>
+        public static Symbol CreateCanonicalOption(Symbol underlyingSymbol, string targetOption, string market = null, string alias = null)
+        {
+            var optionType = GetOptionTypeFromUnderlying(underlyingSymbol);
+            market ??= underlyingSymbol.ID.Market;
+
+            return CreateOption(underlyingSymbol,
+                targetOption,
+                market,
+                optionType.DefaultOptionStyle(),
+                default,
+                default,
+                SecurityIdentifier.DefaultDate,
+                alias);
+        }
+
 
         /// <summary>
         /// Provides a convenience method for creating a future Symbol.
@@ -227,7 +287,7 @@ namespace QuantConnect
                 {
                     if (SecurityType.IsOption())
                     {
-                        _canonical = CreateOption(Underlying, ID.Market, SecurityType.DefaultOptionStyle(), default(OptionRight), 0m, SecurityIdentifier.DefaultDate);
+                        _canonical = CreateCanonicalOption(Underlying, ID.Symbol, ID.Market, null);
                     }
                     else if (SecurityType == SecurityType.Future)
                     {
@@ -330,12 +390,27 @@ namespace QuantConnect
         /// Creates new symbol with updated mapped symbol. Symbol Mapping: When symbols change over time (e.g. CHASE-> JPM) need to update the symbol requested.
         /// Method returns newly created symbol
         /// </summary>
-        public Symbol UpdateMappedSymbol(string mappedSymbol)
+        public Symbol UpdateMappedSymbol(string mappedSymbol, uint contractDepthOffset = 0)
         {
             // Throw for any option SecurityType that is not for equities, we don't support mapping for them (FOPs and Index Options)
             if (ID.SecurityType.IsOption() && SecurityType != SecurityType.Option)
             {
                 throw new ArgumentException($"SecurityType {ID.SecurityType} can not be mapped.");
+            }
+
+            if(ID.SecurityType == SecurityType.Future)
+            {
+                if (mappedSymbol == Value)
+                {
+                    // futures with no real continuous mapping
+                    return this;
+                }
+                var id = SecurityIdentifier.Parse(mappedSymbol);
+                var underlying = new Symbol(id, mappedSymbol);
+                underlying = underlying.AdjustSymbolByOffset(contractDepthOffset);
+
+                // we map the underlying
+                return new Symbol(ID, underlying.Value, underlying);
             }
 
             // Avoid updating the current instance's underlying Symbol.
@@ -348,14 +423,14 @@ namespace QuantConnect
             // This will ensure that we map all of the underlying Symbol(s) that also require mapping updates.
             if (HasUnderlying)
             {
-                underlyingSymbol = Underlying.UpdateMappedSymbol(mappedSymbol);
+                underlyingSymbol = Underlying.UpdateMappedSymbol(mappedSymbol, contractDepthOffset);
             }
 
             // If this Symbol is not a custom data type, and the security type does not support mapping,
             // then we know for a fact that this Symbol should not be mapped.
             // Custom data types should be mapped, especially if this method is called on them because
             // they can have an underlying that is also mapped.
-            if (SecurityType != SecurityType.Base && !SecurityType.RequiresMapping())
+            if (SecurityType != SecurityType.Base && !this.RequiresMapping())
             {
                 return new Symbol(ID, Value, underlyingSymbol);
             }
@@ -382,7 +457,7 @@ namespace QuantConnect
         }
 
         /// <summary>
-        /// Determines the SecurityType based on the underlying Symbol's SecurityType
+        /// Determines the SecurityType based on the underlying Symbol's SecurityType  <see cref="GetUnderlyingFromOptionType(SecurityType)"/>
         /// </summary>
         /// <param name="securityType">SecurityType of the underlying Symbol</param>
         /// <returns>SecurityType of the option</returns>
@@ -399,6 +474,27 @@ namespace QuantConnect
                     return SecurityType.IndexOption;
                 default:
                     throw new ArgumentException($"No option type exists for underlying SecurityType: {securityType}");
+            }
+        }
+
+        /// <summary>
+        /// Determines the underlying SecurityType based on the option Symbol's SecurityType <see cref="GetOptionTypeFromUnderlying(SecurityType)"/>
+        /// </summary>
+        /// <param name="securityType">SecurityType of the option Symbol</param>
+        /// <returns>SecurityType of the underlying</returns>
+        /// <exception cref="ArgumentException">The provided option has no SecurityType able to represent it as an underlying</exception>
+        public static SecurityType GetUnderlyingFromOptionType(SecurityType securityType)
+        {
+            switch (securityType)
+            {
+                case SecurityType.Option:
+                    return SecurityType.Equity;
+                case SecurityType.FutureOption:
+                    return SecurityType.Future;
+                case SecurityType.IndexOption:
+                    return SecurityType.Index;
+                default:
+                    throw new ArgumentException($"No underlying type exists for option SecurityType: {securityType}");
             }
         }
 
@@ -637,10 +733,6 @@ namespace QuantConnect
                 case SecurityType.FutureOption:
                 case SecurityType.Option:
                 case SecurityType.IndexOption:
-                    if (securityIdentifier.Date == SecurityIdentifier.DefaultDate)
-                    {
-                        return $"?{underlying.Value.LazyToUpper()}";
-                    }
                     sym = underlying.Value;
                     if (securityIdentifier.Symbol != underlying.ID.Symbol)
                     {
@@ -652,6 +744,11 @@ namespace QuantConnect
                         // NOT
                         //     GC  C3200...|GC18Z20
                         sym = securityIdentifier.Symbol;
+                    }
+
+                    if (securityIdentifier.Date == SecurityIdentifier.DefaultDate)
+                    {
+                        return $"?{sym.LazyToUpper()}";
                     }
 
                     if (sym.Length > 5) sym += " ";

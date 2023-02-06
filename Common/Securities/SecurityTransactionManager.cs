@@ -21,6 +21,7 @@ using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
 using static QuantConnect.StringExtensions;
+using Python.Runtime;
 
 namespace QuantConnect.Securities
 {
@@ -32,6 +33,7 @@ namespace QuantConnect.Securities
         private readonly Dictionary<DateTime, decimal> _transactionRecord;
         private readonly IAlgorithm _algorithm;
         private int _orderId;
+        private int _groupOrderManagerId;
         private readonly SecurityManager _securities;
         private TimeSpan _marketOrderFillTimeout = TimeSpan.FromSeconds(5);
 
@@ -131,9 +133,23 @@ namespace QuantConnect.Securities
             var submit = request as SubmitOrderRequest;
             if (submit != null)
             {
-                submit.SetOrderId(GetIncrementOrderId());
+                SetOrderId(submit);
             }
             return _orderProcessor.Process(request);
+        }
+
+        /// <summary>
+        /// Sets the order id for the specified submit request
+        /// </summary>
+        /// <param name="request">Request to set the order id for</param>
+        /// <remarks>This method is public so we can request an order id from outside the assembly, for testing for example</remarks>
+        public void SetOrderId(SubmitOrderRequest request)
+        {
+            // avoid setting the order id if it's already been set
+            if (request.OrderId < 1)
+            {
+                request.SetOrderId(GetIncrementOrderId());
+            }
         }
 
         /// <summary>
@@ -229,6 +245,16 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
+        /// Gets an enumerable of <see cref="OrderTicket"/> matching the specified <paramref name="filter"/>
+        /// </summary>
+        /// <param name="filter">The Python function filter used to find the required order tickets</param>
+        /// <returns>An enumerable of <see cref="OrderTicket"/> matching the specified <paramref name="filter"/></returns>
+        public IEnumerable<OrderTicket> GetOrderTickets(PyObject filter)
+        {
+            return _orderProcessor.GetOrderTickets(filter.ConvertToDelegate<Func<OrderTicket, bool>>());
+        }
+
+        /// <summary>
         /// Get an enumerable of open <see cref="OrderTicket"/> for the specified symbol
         /// </summary>
         /// <param name="symbol">The symbol for which to return the order tickets</param>
@@ -249,12 +275,50 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
+        /// Gets an enumerable of opened <see cref="OrderTicket"/> matching the specified <paramref name="filter"/>
+        /// However, this method can be confused with the override that takes a Symbol as parameter. For this reason
+        /// it first checks if it can convert the parameter into a symbol. If that conversion cannot be aplied it
+        /// assumes the parameter is a Python function object and not a Python representation of a Symbol.
+        /// </summary>
+        /// <param name="filter">The Python function filter used to find the required order tickets</param>
+        /// <returns>An enumerable of opened <see cref="OrderTicket"/> matching the specified <paramref name="filter"/></returns>
+        public IEnumerable<OrderTicket> GetOpenOrderTickets(PyObject filter)
+        {
+            Symbol pythonSymbol;
+            if (filter.TryConvert(out pythonSymbol))
+            {
+                return GetOpenOrderTickets(pythonSymbol);
+            }
+            return _orderProcessor.GetOpenOrderTickets(filter.ConvertToDelegate<Func<OrderTicket, bool>>());
+        }
+
+        /// <summary>
         /// Gets the remaining quantity to be filled from open orders, i.e. order size minus quantity filled
         /// </summary>
         /// <param name="filter">Filters the order tickets to be included in the aggregate quantity remaining to be filled</param>
         /// <returns>Total quantity that hasn't been filled yet for all orders that were not filtered</returns>
         public decimal GetOpenOrdersRemainingQuantity(Func<OrderTicket, bool> filter = null)
         {
+            return GetOpenOrderTickets(filter)
+                .Aggregate(0m, (d, t) => d + t.Quantity - t.QuantityFilled);
+        }
+
+        /// <summary>
+        /// Gets the remaining quantity to be filled from open orders, i.e. order size minus quantity filled
+        /// However, this method can be confused with the override that takes a Symbol as parameter. For this reason
+        /// it first checks if it can convert the parameter into a symbol. If that conversion cannot be aplied it
+        /// assumes the parameter is a Python function object and not a Python representation of a Symbol.
+        /// </summary>
+        /// <param name="filter">Filters the order tickets to be included in the aggregate quantity remaining to be filled</param>
+        /// <returns>Total quantity that hasn't been filled yet for all orders that were not filtered</returns>
+        public decimal GetOpenOrdersRemainingQuantity(PyObject filter)
+        {
+            Symbol pythonSymbol;
+            if (filter.TryConvert(out pythonSymbol))
+            {
+                return GetOpenOrdersRemainingQuantity(pythonSymbol);
+            }
+
             return GetOpenOrderTickets(filter)
                 .Aggregate(0m, (d, t) => d + t.Quantity - t.QuantityFilled);
         }
@@ -333,6 +397,25 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
+        /// Gets open orders matching the specified filter. However, this method can be confused with the
+        /// override that takes a Symbol as parameter. For this reason it first checks if it can convert
+        /// the parameter into a symbol. If that conversion cannot be aplied it assumes the parameter is
+        /// a Python function object and not a Python representation of a Symbol.
+        /// </summary>
+        /// <param name="filter">Python function object used to filter the orders</param>
+        /// <returns>All filtered open orders this order provider currently holds</returns>
+        public List<Order> GetOpenOrders(PyObject filter)
+        {
+            Symbol pythonSymbol;
+            if (filter.TryConvert(out pythonSymbol))
+            {
+                return GetOpenOrders(pythonSymbol);
+            }
+            Func<Order, bool> csharpFilter = filter.ConvertToDelegate<Func<Order, bool>>();
+            return _orderProcessor.GetOpenOrders(x => csharpFilter(x));
+        }
+
+        /// <summary>
         /// Gets the current number of orders that have been processed
         /// </summary>
         public int OrdersCount
@@ -355,9 +438,9 @@ namespace QuantConnect.Securities
         /// </summary>
         /// <param name="brokerageId">The brokerage id to fetch</param>
         /// <returns>The first order matching the brokerage id, or null if no match is found</returns>
-        public Order GetOrderByBrokerageId(string brokerageId)
+        public List<Order> GetOrdersByBrokerageId(string brokerageId)
         {
-            return _orderProcessor.GetOrderByBrokerageId(brokerageId);
+            return _orderProcessor.GetOrdersByBrokerageId(brokerageId);
         }
 
         /// <summary>
@@ -366,9 +449,19 @@ namespace QuantConnect.Securities
         /// </summary>
         /// <param name="filter">Delegate used to filter the orders</param>
         /// <returns>All orders this order provider currently holds by the specified filter</returns>
-        public IEnumerable<Order> GetOrders(Func<Order, bool> filter)
+        public IEnumerable<Order> GetOrders(Func<Order, bool> filter = null)
         {
-            return _orderProcessor.GetOrders(filter);
+            return _orderProcessor.GetOrders(filter ?? (x => true));
+        }
+
+        /// <summary>
+        /// Gets all orders matching the specified filter.
+        /// </summary>
+        /// <param name="filter">Python function object used to filter the orders</param>
+        /// <returns>All orders this order provider currently holds by the specified filter</returns>
+        public IEnumerable<Order> GetOrders(PyObject filter)
+        {
+            return _orderProcessor.GetOrders(filter.ConvertToDelegate<Func<Order, bool>>());
         }
 
         /// <summary>
@@ -378,6 +471,15 @@ namespace QuantConnect.Securities
         public int GetIncrementOrderId()
         {
             return Interlocked.Increment(ref _orderId);
+        }
+
+        /// <summary>
+        /// Get a new group order manager id, and increment the internal counter.
+        /// </summary>
+        /// <returns>New unique int group order manager id.</returns>
+        public int GetIncrementGroupOrderManagerId()
+        {
+            return Interlocked.Increment(ref _groupOrderManagerId);
         }
 
         /// <summary>
@@ -409,14 +511,6 @@ namespace QuantConnect.Securities
                 }
                 _transactionRecord.Add(clone, transactionProfitLoss);
             }
-        }
-
-        /// <summary>
-        /// Returns true when the specified order is in a completed state
-        /// </summary>
-        private static bool Completed(Order order)
-        {
-            return order.Status == OrderStatus.Filled || order.Status == OrderStatus.PartiallyFilled || order.Status == OrderStatus.Invalid || order.Status == OrderStatus.Canceled;
         }
     }
 }

@@ -28,6 +28,8 @@ using QuantConnect.Orders;
 using QuantConnect.Orders.Fees;
 using QuantConnect.Tests.Common.Securities;
 using QuantConnect.Tests.Engine.DataFeeds;
+using QuantConnect.Orders.Fills;
+using System.Linq;
 
 namespace QuantConnect.Tests.Algorithm
 {
@@ -1186,6 +1188,7 @@ namespace QuantConnect.Tests.Algorithm
             Assert.AreEqual(-3000m, actual);
 
             var btcusd = algo.AddCrypto("BTCUSD", market: Market.GDAX);
+            btcusd.BuyingPowerModel = new CashBuyingPowerModel();
             btcusd.FeeModel = new ConstantFeeModel(0);
             // Set Price to $26
             Update(btcusd, 26);
@@ -1382,8 +1385,134 @@ namespace QuantConnect.Tests.Algorithm
             algo.SetHoldings(Symbols.MSFT, 1.0m);
             algo.SetHoldings(Symbols.MSFT, 1.0f);
 
-            int expected = 35;
+            const int expected = 38;
             Assert.AreEqual(expected, algo.Transactions.LastOrderId);
+        }
+
+        [Test]
+        public void MarketOrdersAreSupportedForFuturesOnExtendedMarketHours()
+        {
+            var algo = GetAlgorithm(out _, 1, 0);
+
+            var mockOrderProcessor = new Mock<ITransactionHandler>();
+            var mockRequest = new Mock<SubmitOrderRequest>(null, null, null, null, null, null, null, null, null, null);
+            var mockTicket = new OrderTicket(algo.Transactions, mockRequest.Object);
+            mockOrderProcessor.Setup(m => m.Process(It.IsAny<OrderRequest>())).Returns(mockTicket);
+            mockOrderProcessor.Setup(m => m.GetOrderTicket(It.IsAny<int>())).Returns(mockTicket);
+            algo.Transactions.SetOrderProcessor(mockOrderProcessor.Object);
+
+            var es20h20 = algo.AddFutureContract(
+                QuantConnect.Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2020, 3, 20)),
+                Resolution.Minute,
+                extendedMarketHours: true);
+            var es20h20FOP = algo.AddFutureOptionContract(
+                Symbol.CreateOption(es20h20.Symbol, Market.CME, OptionStyle.American, OptionRight.Call, 2550m, new DateTime(2020, 3, 20)),
+                Resolution.Minute);
+
+            //Set price to $25
+            Update(es20h20, 25);
+            Update(es20h20FOP, 25);
+            algo.Portfolio.SetCash(150000);
+
+            var testOrders = (DateTime dateTime) =>
+            {
+                algo.SetDateTime(dateTime);
+
+                var ticket = algo.Buy(es20h20.Symbol, 1);
+                Assert.AreEqual(OrderStatus.New, ticket.Status, $"Future buy market order status should be new at {dateTime}, but was {ticket.Status}");
+                ticket = algo.Sell(es20h20.Symbol, 1);
+                Assert.AreEqual(OrderStatus.New, ticket.Status, $"Future sell market order status should be new at {dateTime}, but was {ticket.Status}");
+
+                ticket = algo.Buy(es20h20FOP.Symbol, 1);
+                Assert.AreEqual(OrderStatus.New, ticket.Status, $"Future option buy market order status should be new at {dateTime}, but was {ticket.Status}");
+                ticket = algo.Sell(es20h20FOP.Symbol, 1);
+                Assert.AreEqual(OrderStatus.New, ticket.Status, $"Future option sell market order status should be new at {dateTime}, but was {ticket.Status}");
+            };
+
+            // October 7 to 11 (monday to friday). Testing pre-market hours
+            for (var i = 7; i <= 11; i++)
+            {
+                testOrders(new DateTime(2013, 10, i, 5, 0, 0));
+            }
+
+            // October 6 to 10 (sunday to thrusday). Testing post-market hours
+            for (var i = 6; i <= 10; i++)
+            {
+                testOrders(new DateTime(2013, 10, i, 23, 0, 0));
+            }
+        }
+
+        [Test]
+        public void MarketOnOpenOrdersNotSupportedForFutures()
+        {
+            var algo = GetAlgorithm(out _, 1, 0);
+            var es20h20 = algo.AddFutureContract(
+                QuantConnect.Symbol.CreateFuture(Futures.Indices.SP500EMini, Market.CME, new DateTime(2020, 3, 20)),
+                Resolution.Minute);
+
+            var ticket = algo.MarketOnOpenOrder(es20h20.Symbol, 1);
+            Assert.That(ticket, Has.Property("Status").EqualTo(OrderStatus.Invalid));
+        }
+
+        [Test]
+        public void EuropeanOptionsCannotBeExercisedBeforeExpiry()
+        {
+            var algo = GetAlgorithm(out _, 1, 0);
+
+            var optionExpiry = new DateTime(2020, 3, 20);
+
+            var indexSymbol = Symbol.Create("SPX", SecurityType.Index, Market.USA);
+            var optionSymbol = Symbol.CreateOption(indexSymbol, Market.USA, OptionStyle.European, OptionRight.Call, 1, optionExpiry);
+            var europeanOptionContract = algo.AddOptionContract(optionSymbol, Resolution.Minute);
+            europeanOptionContract.SetMarketPrice(new TradeBar() { Symbol = europeanOptionContract.Symbol, Value = 1, Time = algo.Time });
+
+            europeanOptionContract.Holdings.SetHoldings(1, 1);
+
+            algo.SetDateTime(optionExpiry.AddDays(-1).AddHours(15));
+            var ticket = algo.ExerciseOption(europeanOptionContract.Symbol, 1);
+            Assert.AreEqual(OrderStatus.Invalid, ticket.Status);
+            Assert.AreEqual(OrderResponseErrorCode.EuropeanOptionNotExpiredOnExercise, ticket.SubmitRequest.Response.ErrorCode);
+
+            algo.SetDateTime(optionExpiry.AddHours(15));
+            ticket = algo.ExerciseOption(europeanOptionContract.Symbol, 1);
+            Assert.AreEqual(OrderStatus.New, ticket.Status);
+        }
+
+        [TestCase(new int[] { 1, 2 }, false)]
+        [TestCase(new int[] { -1, 10 }, false)]
+        [TestCase(new int[] { 2, -5 }, false)]
+        [TestCase(new int[] { 1, 2, 3 }, false)]
+        [TestCase(new int[] { 200, -11, 7 }, false)]
+        [TestCase(new int[] { 10, 20 }, true)]
+        [TestCase(new int[] { -10, 100 }, true)]
+        [TestCase(new int[] { 20, -50 }, true)]
+        [TestCase(new int[] { 10, 20, 30 }, true)]
+        [TestCase(new int[] { 1000, -55, 35 }, true)]
+        public void ComboOrderLegsRatiosAreValidated(int[] quantities, bool shouldThrow)
+        {
+            var algo = GetAlgorithm(out _, 1, 0);
+            var legs = quantities.Select(q => Leg.Create(Symbols.MSFT, q)).ToList();
+
+            if (shouldThrow)
+            {
+                Assert.Throws<ArgumentException>(() => algo.ComboMarketOrder(legs, 1));
+                Assert.Throws<ArgumentException>(() => algo.ComboLimitOrder(legs, 1, 100));
+                Assert.Throws<ArgumentException>(() => algo.ComboLegLimitOrder(legs.Select(leg =>
+                {
+                    leg.OrderPrice = 10;
+                    return leg;
+                }).ToList(), 1));
+            }
+            else
+            {
+                Assert.DoesNotThrow(() => algo.ComboMarketOrder(legs, 1));
+                Assert.DoesNotThrow(() => algo.ComboLimitOrder(legs, 1, 100));
+                Assert.DoesNotThrow(() => algo.ComboLegLimitOrder(legs.Select(leg =>
+                {
+                    leg.OrderPrice = 10;
+                    return leg;
+                }).ToList(), 1));
+            }
         }
 
         private class TestShortableProvider : IShortableProvider

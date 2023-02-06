@@ -47,7 +47,8 @@ namespace QuantConnect.Algorithm.CSharp
 
         private readonly CircularQueue<OrderType> _orderTypesQueue = new CircularQueue<OrderType>(Enum.GetValues(typeof(OrderType))
                                                                         .OfType<OrderType>()
-                                                                        .Where (x => x != OrderType.OptionExercise && x != OrderType.LimitIfTouched));
+                                                                        .Where (x => x != OrderType.OptionExercise && x != OrderType.LimitIfTouched
+                                                                            && x != OrderType.ComboMarket && x != OrderType.ComboLimit && x != OrderType.ComboLegLimit));
         private readonly List<OrderTicket> _tickets = new List<OrderTicket>();
 
         /// <summary>
@@ -188,6 +189,16 @@ namespace QuantConnect.Algorithm.CSharp
         /// This is used by the regression test system to indicate which languages this algorithm is written in.
         /// </summary>
         public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// Data Points count of all timeslices of algorithm
+        /// </summary>
+        public long DataPoints => 4031;
+
+        /// <summary>
+        /// Data Points count of the algorithm history
+        /// </summary>
+        public int AlgorithmHistoryDataPoints => 0;
 
         /// <summary>
         /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
