@@ -16,8 +16,9 @@
 
 using System;
 using ProtoBuf;
+using Python.Runtime;
 using Newtonsoft.Json;
-using static QuantConnect.StringExtensions;
+using QuantConnect.Securities;
 
 namespace QuantConnect
 {
@@ -30,6 +31,8 @@ namespace QuantConnect
     [ProtoContract(SkipConstructor = true)]
     public sealed class Symbol : IEquatable<Symbol>, IComparable
     {
+        private static readonly Lazy<SecurityDefinitionSymbolResolver> _securityDefinitionSymbolResolver = new (() => SecurityDefinitionSymbolResolver.GetInstance());
+
         private Symbol _canonical;
         // for performance we register how we compare with empty
         private bool? _isEmpty;
@@ -107,11 +110,11 @@ namespace QuantConnect
                         SecurityIdentifier.DefaultDate);
 
                 case SecurityType.FutureOption:
-                    throw new NotImplementedException("Cannot create future option Symbol using this method (insufficient information). Use `CreateOption(Symbol, ...)` instead.");
+                    throw new NotImplementedException(Messages.Symbol.InsufficientInformationToCreateFutureOptionSymbol);
 
                 case SecurityType.Commodity:
                 default:
-                    throw new NotImplementedException(Invariant($"The security type has not been implemented yet: {securityType}"));
+                    throw new NotImplementedException(Messages.Symbol.SecurityTypeNotImplementedYet(securityType));
             }
 
             return new Symbol(sid, alias ?? ticker);
@@ -130,7 +133,25 @@ namespace QuantConnect
         /// <param name="underlying">Underlying symbol to set for the Base Symbol</param>
         /// <param name="market">Market</param>
         /// <returns>New non-mapped Base Symbol that contains an Underlying Symbol</returns>
-        public static Symbol CreateBase(Type baseType, Symbol underlying, string market)
+        public static Symbol CreateBase(PyObject baseType, Symbol underlying, string market = null)
+        {
+            return CreateBase(baseType.CreateType(), underlying, market);
+        }
+
+        /// <summary>
+        /// Creates a new Symbol for custom data. This method allows for the creation of a new Base Symbol
+        /// using the first ticker and the first traded date from the provided underlying Symbol. This avoids
+        /// the issue for mappable types, where the ticker is remapped supposing the provided ticker value is from today.
+        /// See <see cref="SecurityIdentifier"/>'s private method GetFirstTickerAndDate.
+        /// The provided symbol is also set to <see cref="Symbol.Underlying"/> so that it can be accessed using the custom data Symbol.
+        /// This is useful for associating custom data Symbols to other asset classes so that it is possible to filter using custom data
+        /// and place trades on the underlying asset based on the filtered custom data.
+        /// </summary>
+        /// <param name="baseType">Type of BaseData instance</param>
+        /// <param name="underlying">Underlying symbol to set for the Base Symbol</param>
+        /// <param name="market">Market</param>
+        /// <returns>New non-mapped Base Symbol that contains an Underlying Symbol</returns>
+        public static Symbol CreateBase(Type baseType, Symbol underlying, string market = null)
         {
             // The SID Date is only defined for the following security types: base, equity, future, option.
             // Default to SecurityIdentifier.DefaultDate if there's no matching SecurityType
@@ -141,7 +162,7 @@ namespace QuantConnect
                     ? underlying.ID.Date
                     : (DateTime?)null;
 
-            var sid = SecurityIdentifier.GenerateBase(baseType, underlying.ID.Symbol, market, mapSymbol: false, date: firstDate);
+            var sid = SecurityIdentifier.GenerateBase(baseType, underlying.ID.Symbol, market ?? Market.USA, mapSymbol: false, date: firstDate);
             return new Symbol(sid, underlying.Value, underlying);
         }
 
@@ -295,7 +316,7 @@ namespace QuantConnect
                     }
                     else
                     {
-                        throw new InvalidOperationException("Canonical is only defined for SecurityType.Option, SecurityType.Future, SecurityType.FutureOption");
+                        throw new InvalidOperationException(Messages.Symbol.CanonicalNotDefined);
                     }
                 }
                 return _canonical;
@@ -361,6 +382,26 @@ namespace QuantConnect
             get { return ID.SecurityType; }
         }
 
+        /// <summary>
+        /// The Committee on Uniform Securities Identification Procedures (CUSIP) number corresponding to this <see cref="Symbol"/>
+        /// </summary>
+        public string CUSIP { get { return _securityDefinitionSymbolResolver.Value.CUSIP(this); } }
+
+        /// <summary>
+        /// The composite Financial Instrument Global Identifier (FIGI) corresponding to this <see cref="Symbol"/>
+        /// </summary>
+        public string CompositeFIGI { get { return _securityDefinitionSymbolResolver.Value.CompositeFIGI(this); } }
+
+        /// <summary>
+        /// The Stock Exchange Daily Official List (SEDOL) security identifier corresponding to this <see cref="Symbol"/>
+        /// </summary>
+        public string SEDOL { get { return _securityDefinitionSymbolResolver.Value.SEDOL(this); } }
+
+        /// <summary>
+        /// The International Securities Identification Number (ISIN) corresponding to this <see cref="Symbol"/>
+        /// </summary>
+        public string ISIN { get { return _securityDefinitionSymbolResolver.Value.ISIN(this); } }
+
 
         #endregion
 
@@ -395,7 +436,7 @@ namespace QuantConnect
             // Throw for any option SecurityType that is not for equities, we don't support mapping for them (FOPs and Index Options)
             if (ID.SecurityType.IsOption() && SecurityType != SecurityType.Option)
             {
-                throw new ArgumentException($"SecurityType {ID.SecurityType} can not be mapped.");
+                throw new ArgumentException(Messages.Symbol.SecurityTypeCannotBeMapped(ID.SecurityType));
             }
 
             if(ID.SecurityType == SecurityType.Future)
@@ -419,7 +460,7 @@ namespace QuantConnect
             // Some universe Symbols, such as Constituent ETF universe Symbols and mapped custom data Symbols, have an
             // underlying equity ETF Symbol as their underlying. When we're checking to see if a specific BaseData
             // instance requires mapping, only the parent Symbol will be updated, which might not even need to be mapped
-            // (e.g. universe symbols with no equity ticker in symbol value). 
+            // (e.g. universe symbols with no equity ticker in symbol value).
             // This will ensure that we map all of the underlying Symbol(s) that also require mapping updates.
             if (HasUnderlying)
             {
@@ -473,7 +514,7 @@ namespace QuantConnect
                 case SecurityType.Index:
                     return SecurityType.IndexOption;
                 default:
-                    throw new ArgumentException($"No option type exists for underlying SecurityType: {securityType}");
+                    throw new ArgumentException(Messages.Symbol.NoOptionTypeForUnderlying(securityType));
             }
         }
 
@@ -494,7 +535,7 @@ namespace QuantConnect
                 case SecurityType.IndexOption:
                     return SecurityType.Index;
                 default:
-                    throw new ArgumentException($"No underlying type exists for option SecurityType: {securityType}");
+                    throw new ArgumentException(Messages.Symbol.NoUnderlyingForOption(securityType));
             }
         }
 
@@ -585,7 +626,7 @@ namespace QuantConnect
                 return string.Compare(Value, sym.Value, StringComparison.OrdinalIgnoreCase);
             }
 
-            throw new ArgumentException("Object must be of type Symbol or string.");
+            throw new ArgumentException(Messages.Symbol.UnexpectedObjectTypeToCompareTo);
         }
 
         /// <summary>
